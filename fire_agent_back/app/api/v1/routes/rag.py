@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.uploads import KB_ALLOWED_EXT, KB_MAX_MB, read_limited, validate_upload
 from app.models.user import User
 from app.models.rag_history import RagHistory
 from app.services.rag_service import RagService
@@ -152,6 +153,9 @@ async def list_history(
                 "answer": (r.answer or "")[:200],
                 "method": r.method or "none",
                 "llm_used": bool(r.llm_used),
+                # 实际回答模型存于 result JSON（v1.0.1 后续迭代）；旧记录无此字段则留空
+                "llm_model": ((r.result or {}).get("llm_model") or "") if isinstance(r.result, dict) else "",
+                "llm_degraded": bool((r.result or {}).get("llm_degraded")) if isinstance(r.result, dict) else False,
                 "matched": r.matched or 0,
                 "time": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else "",
             }
@@ -220,7 +224,9 @@ async def upload_document(
 ):
     """上传知识库文档（归属当前用户）"""
     svc = RagService(db)
-    content = await file.read()
+    # 边读边限体积：整包 read() 会把「判大小」变成「已经占满内存之后再判」
+    content = await read_limited(file, KB_MAX_MB)
+    validate_upload(content, file.filename, KB_ALLOWED_EXT, KB_MAX_MB)
     result = svc.upload_document(content, file.filename, category, user_id=current.id)
     return {
         "code": 200,
@@ -242,6 +248,55 @@ async def list_documents(
         "message": "success",
         "data": docs,
     }
+
+
+@router.get("/documents/{doc_id}/content")
+async def get_document_content(
+    doc_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """文档全文（按分片序号拼接），供前端点击文档条目后阅读（仅本人或管理员）"""
+    svc = RagService(db)
+    content = svc.get_document_content(doc_id, user_id=current.id, is_admin=current.role == "admin")
+    if content is None:
+        raise HTTPException(status_code=404, detail="文档不存在或无权限查看")
+    title, text, chunk_count = content
+    return {
+        "code": 200,
+        "message": "success",
+        "data": {"id": doc_id, "title": title, "content": text, "chunks": chunk_count},
+    }
+
+
+@router.get("/documents/{doc_id}/file")
+async def get_document_file(
+    doc_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """原始文件流（PDF 原件等），供前端内嵌预览/下载（仅本人或管理员）"""
+    from fastapi.responses import FileResponse
+    from urllib.parse import quote
+
+    svc = RagService(db)
+    info = svc.get_document_file(doc_id, user_id=current.id, is_admin=current.role == "admin")
+    if info is None:
+        raise HTTPException(status_code=404, detail="文档不存在、无权限或原文件已丢失")
+    title, path, ftype = info
+    media_map = {"pdf": "application/pdf", "txt": "text/plain", "md": "text/markdown"}
+    media = media_map.get(ftype, "application/octet-stream")
+    # ASCII 回退名 + RFC 5987 编码名，保证中文文件名不乱码
+    ascii_fallback = (title or "document").encode("ascii", "ignore").decode() or "document"
+    quoted = quote(title or "document")
+    return FileResponse(
+        path,
+        media_type=media,
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{quoted}; filename=\"{ascii_fallback}\"",
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.delete("/documents/{doc_id}")

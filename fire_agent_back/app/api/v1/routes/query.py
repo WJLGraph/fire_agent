@@ -36,8 +36,16 @@ def _save_history(db: Session, user_id: int, text: str, summary: str, method: st
 
 
 @router.post("/parse", response_model=dict)
-async def parse_query(req: QueryRequest, db: Session = Depends(get_db)):
-    """解析自然语言查询，返回结构化参数"""
+async def parse_query(
+    req: QueryRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """解析自然语言查询，返回结构化参数
+
+    要鉴权：本端点会调用 LLM 做意图识别（决策模型 / 百炼），匿名开放等于
+    给公网提供一个可免费刷量的 LLM 接口。
+    """
     svc = QueryService(db)
     parsed = svc.parse(req.query)
     return {

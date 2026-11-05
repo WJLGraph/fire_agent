@@ -1,87 +1,94 @@
-# FlameSentry · Smart Forest-Fire Early-Warning & Multi-Agent Collaboration Platform — Backend (fire_agent_back)
+# FlameSentry · Smart Fire-Risk Early Warning & Multi-Agent Collaboration Platform — Backend (fire_agent_back)
 
-> **Current version: v1.0.1** (P0 reliability foundation + P1 orchestration upgrade + P2 engineering modules; see Chapter 13 changelog in the [Implementation doc](./整体实现.md), Chinese)
-> This is the backend of the "FlameSentry · Smart Forest-Fire Early-Warning & Multi-Agent Collaboration Platform" (practical display name: **焰哨多Agent与可视化平台**), built on **FastAPI + PostgreSQL/PostGIS + LangChain + LangGraph**.
-> Companion frontend: [fire_agent_front](https://gitee.com/wjl2004/fire_agent_front) (Vue3 + OpenLayers + ECharts)
-> The complete system design document is in this repo: [Implementation.md](./整体实现.md) (Chinese).
-> **Online demo**: https://wjl2004.ffuf.cn/
-> **GitHub repo**: https://github.com/wjl-cong/fire_agent (⭐ Star welcome!)
+> **Current version**: v1.0.1 (including post-v1.0.1 iterations: LongCat integration / AMD GPU Cloud four capability classes / knowledge-base full text & original files / startup self-healing / AgentGauntlet red teaming / security hardening & streaming reliability — see [13. Version History](#13-version-history))
+> This repository is the backend of "FlameSentry — Smart Fire-Risk Early Warning & Multi-Agent Collaboration Platform" (deployed name: **焰哨多Agent与可视化平台**), built with **FastAPI + PostgreSQL/PostGIS + LangChain/LangGraph**.
+> Frontend: [fire_agent_front](https://gitee.com/WJLGraph/Fire_agent_front) (Vue 3 + Vite + OpenLayers + Three.js)
+> **Live demo**: https://wjl2004.ffuf.cn/ or https://8.156.67.47/login
+> **Demo account**: test / 123456
+> **GitHub**: https://github.com/wjl-cong/fire_agent (Stars welcome)
 
 ---
 
 ## Table of Contents
 
-1. [Project Overview](#1-project-overview)
+1. [Overview & Architecture](#1-overview--architecture)
 2. [Tech Stack](#2-tech-stack)
 3. [Project Structure](#3-project-structure)
-4. [Core Features in Detail](#4-core-features-in-detail)
-5. [Database Design](#5-database-design)
-6. [API Reference](#6-api-reference)
-7. [Environment Requirements](#7-environment-requirements)
-8. [Quick Start](#8-quick-start)
-9. [Data Import](#9-data-import)
-10. [Configuration (.env)](#10-configuration-env)
-11. [FAQ](#11-faq)
+4. [Data Model](#4-data-model)
+5. [API Reference](#5-api-reference)
+6. [Agent Orchestration](#6-agent-orchestration)
+7. [LLM Access & Degradation](#7-llm-access--degradation)
+8. [RAG Pipeline](#8-rag-pipeline)
+9. [Memory · Tools · Observability · Evaluation · Red Teaming](#9-memory--tools--observability--evaluation--red-teaming)
+10. [Startup & Configuration](#10-startup--configuration)
+11. [Docker Deployment](#11-docker-deployment)
+12. [FAQ](#12-faq)
+13. [Version History](#13-version-history)
 
 ---
 
-## 1. Project Overview
+## 1. Overview & Architecture
 
-The backend is an API service for a front-end/back-end separated architecture, providing the following core capabilities:
+An agent-driven fire-risk analysis service: it accepts natural-language tasks → LangGraph multi-agent orchestration (data query / GIS analysis / knowledge retrieval / report generation / report review / human approval) → persists reports. It also serves dashboard data, smart query, knowledge-base RAG, vision recognition, speech synthesis/transcription and administration APIs.
 
-| Module | Core Capabilities |
-|---|---|
-| Auth | JWT (HS256, 24h) register/login, bcrypt password hashing, admin/user dual roles, user data isolation |
-| Dashboard | Historical fire points (5,411 NASA FIRMS records) / predicted fire risk (GTWR model) / summary statistics (Top 5 cities) |
-| Smart Query | Natural language → LLM·keyword dual-engine intent recognition → structured query → summary/table/chart/GeoJSON four-dimensional results, history persisted with dedup |
-| Knowledge Base (RAG) | PDF/TXT/MD upload → four-layer text extraction (incl. OCR for scanned pages) → Chinese-aware chunking → vectorization → hybrid retrieval + **Rerank (qwen3-rerank, RRF fallback)** → LLM answer with cited sources; **/ask/stream SSE streaming** and adaptive query rewriting for complex queries |
-| Agent Collaboration | LangGraph StateGraph 8-node orchestration (**parallel fan-out/join + review loop + HITL approval**), async task execution with **SSE node-level live progress**, tasks/steps/reports persisted (history replay), rigid seven-section report template |
-| Reports | Report CRUD + export as Markdown / HTML (print template) |
-| Vision & Speech | **AI fire image recognition** (qwen-vl multimodal, four-part structured conclusion, recognition history persisted for review) + **Speech Recognition (ASR)** (qwen3-asr-flash) + **Speech Synthesis (TTS)** (qwen3-tts-flash), models fixed to Bailian |
-| System Admin | Config written to .env with hot reload (no restart), sensitive info masking, connection tests, Bailian free-quota model catalog (5 categories, one-click switch), system logs (ring buffer of 200 entries), user management |
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    Vue 3 frontend (SPA)                      │
+│  Dashboard / Query / Knowledge Base / Agent / Reports / Admin │
+└───────────────┬──────────────────────────┬───────────────────┘
+                │ REST (JSON envelope)      │ SSE (fetch stream + Authorization header)
+┌───────────────▼──────────────────────────▼───────────────────┐
+│                     FastAPI (/api/v1)                        │
+│ dashboard │ query │ rag │ agent │ reports │ admin │ auth │ vision │
+├──────────────────────────────────────────────────────────────┤
+│ services : data / query / rag                                 │
+│ agents   : orchestrator (LangGraph, 8 nodes)                 │
+│ core     : llm / llm_invoker / reranker / memory_store /     │
+│            mcp_client / observability / amd_directory        │
+├──────────────────────────────────────────────────────────────┤
+│ PostgreSQL + PostGIS (13 business tables / pgvector)          │
+│ File storage (KB_UPLOAD_DIR originals) / recognition images   │
+└──────────────────────────────────────────────────────────────┘
+        │                    │                    │
+   Alibaba Bailian      AMD GPU Cloud        Ollama / LongCat
+   (LLM/Embedding/      (text/vision/         (local or third-party
+    Vision/ASR/TTS)      speech/ocr)            OpenAI-compatible)
+```
 
-**Degradation design**: Every LLM-dependent point has "no-key auto-degradation" capability (keyword parsing / template reports). The system stays fully usable even without any API key. v1.0.1 adds a unified invocation layer (`app/core/llm_invoker.py`): **exponential-backoff retry (1s/2s/4s) for rate-limit/timeout/connection errors → circuit breaker (3 consecutive failures, 60s cooldown) → provider-chain (aliyun/amd/ollama) auto-failover → rule-based fallback**, with provider/model/tokens/degraded audit metadata on every call.
+**Core capabilities**:
+
+- **Multi-agent orchestration**: LangGraph `StateGraph` with 8 nodes, parallel fan-out/join, reflection retries, report review loop and HITL interrupt/resume.
+- **Streaming delivery**: agent task SSE node-level progress + report deltas; RAG Q&A SSE typewriter.
+- **Four LLM providers**: unified `llm_invoker` with retry / circuit breaker / provider-chain fallback / rule-based fallback.
+- **AMD four capability classes**: LLM / vision / speech / OCR, switchable from the admin UI.
+- **Knowledge base**: four-layer PDF extraction + Chinese-aware chunking + hybrid retrieval + rerank + Adaptive RAG + full-text and original-file endpoints.
+- **Observability & quality**: Langfuse tracing, golden-set regression evaluation, AgentGauntlet chaos injection.
 
 ---
 
 ## 2. Tech Stack
 
-| Category | Technology | Version | Purpose |
-|---|---|---|---|
-| Web framework | FastAPI | 0.115.0 | REST API + Swagger docs (/docs) |
-| ASGI server | Uvicorn | 0.30.0 | High-performance async server |
-| ORM | SQLAlchemy | 2.0.35 | Data models for 13 tables |
-| Spatial ORM | GeoAlchemy2 | 0.15.1 | POINT / MULTIPOLYGON geometry fields |
-| Database | PostgreSQL + PostGIS | 14+ / 3.5 | Spatial data storage & indexing |
-| Data validation | Pydantic + pydantic-settings | 2.9.0 | Request/response models + .env config class |
-| **Agent orchestration** | **LangGraph (StateGraph)** | 0.2.64 | 8-node state graph: parallel fan-out/join + review loop + HITL approval gate |
-| **LLM framework** | **LangChain + langchain-openai** | 0.3.17 | ChatOpenAI / OpenAIEmbeddings |
-| **LLM reliability** | **Unified invocation layer (llm_invoker)** | — | Retry (1s/2s/4s) → circuit breaker (3 fails/60s) → provider-chain failover |
-| **State persistence** | **langgraph-checkpoint-postgres + psycopg[binary]** | 2.0.15 / 3.3.6 | PostgresSaver checkpoints (auto-degrades to MemorySaver) |
-| **Rerank** | **DashScope qwen3-rerank** | — | Hybrid-retrieval re-ranking, RRF-fusion fallback on failure |
-| **Tool protocol** | **MCP (mcp + langchain-mcp-adapters)** | 2.2.0 / 0.2.0 | AMap weather read-only data source (FastMCP stdio) |
-| **Observability** | **Langfuse (self-hosted, optional)** | 4.15.6 | Full-trace LangGraph callbacks |
-| Text splitting | langchain-text-splitters | 0.3.5 | RecursiveCharacterTextSplitter (Chinese separators preferred) |
-| PDF parsing | pdfplumber / pypdf / PyMuPDF / RapidOCR | — | Four-layer fallback text extraction (incl. OCR for scanned pages) |
-| Vector store | pgvector | 0.3.6 | Reserved for vector column upgrade |
-| Auth | bcrypt + python-jose | 4.2.1 / 3.3.0 | Password hashing + JWT HS256 |
-| Spatial computation | geopandas / shapely | 1.0.1 / 2.0.5 | Grid clustering, buffer analysis |
-| Data processing | pandas / numpy | 2.2.2 / 1.26.4 | Data import & aggregation |
-| HTTP / upload | httpx / aiofiles / python-multipart | — | Async requests / file upload |
+| Category | Dependency | Version | Purpose |
+| -------- | ---------- | ------- | ------- |
+| Web framework | FastAPI | 0.115.0 | Routing / DI / docs |
+| ASGI | uvicorn | — | Runtime |
+| ORM | SQLAlchemy | 2.0.35 | Models & sessions |
+| Spatial | GeoAlchemy2 | 0.15.1 | PostGIS geometry fields |
+| Database | PostgreSQL + PostGIS | 16 / 3.x | Business & spatial data |
+| Vector | pgvector | 0.3.6 | KB chunk embeddings |
+| Driver | psycopg[binary] | 3.3.6 | PostgreSQL connection |
+| Orchestration | langgraph | 0.2.64 | StateGraph / interrupt / checkpointer |
+| LLM framework | langchain | 0.3.17 | Prompts / tools / callbacks |
+| OpenAI compatible | langchain-openai | 0.3.0 | AMD / LongCat / Ollama |
+| Bailian SDK | dashscope | 1.27.7 | Bailian LLM / Embedding / ASR / TTS |
+| Checkpoint | langgraph-checkpoint-postgres | 2.0.15 | PostgresSaver (falls back to MemorySaver) |
+| PDF | pdfplumber / pypdf / PyMuPDF | — | Three extraction layers |
+| OCR | rapidocr-onnxruntime | — | Local OCR fallback |
+| Observability | langfuse | 4.15.4 | LLM tracing |
+| MCP | mcp / langchain-mcp-adapters | 2.2.0 / 0.2.0 | AMap weather tool (stdio) |
+| Testing | pytest | 9.1.1 | Regression evaluation |
 
-**LLM services (three providers switchable + fixed Bailian multimodal)**:
-
-| Provider | Model Type | Model | Notes |
-|---|---|---|---|
-| Alibaba Bailian DashScope | Chat | qwen-plus | Primary provider, OpenAI-compatible mode |
-| AMD GPU Cloud | Chat | DeepSeek-V4-Flash / Qwen3.8-Flash-Next | Backup provider (Qwen3.8 requires time-window validation) |
-| Local Ollama | Chat | qwen2.5:7b | Offline & free |
-| Alibaba Bailian (fixed) | Embedding | text-embedding-v3 | Decoupled from the Chat provider, unaffected by switching |
-| Alibaba Bailian (fixed) | Vision | qwen-vl-plus | Fire image recognition, base64 multimodal messages |
-| Alibaba Bailian (fixed) | Speech ASR | qwen3-asr-flash | chat/completions + input_audio data URI |
-| Alibaba Bailian (fixed) | Speech TTS | qwen3-tts-flash | Native multimodal endpoint, text → wav |
-
-> **Embedding / Vision / Speech models are always served by Alibaba Bailian**, fully decoupled from `ACTIVE_LLM_PROVIDER`.
+> `requirements.txt` was synced on 2026-10-02; AgentGauntlet is a local evaluation package and is not a deployment dependency.
 
 ---
 
@@ -90,483 +97,517 @@ The backend is an API service for a front-end/back-end separated architecture, p
 ```
 fire_agent_back/
 ├── app/
-│   ├── main.py                  ← Entry: lifespan creates tables + idempotent column backfill + seed admin + CORS + route registration
+│   ├── main.py                     ← lifespan: create_all → idempotent column patching → seed admin/123456 →
+│   │                                  startup self-healing (running → failed + zombie step cleanup); CORS; 8 routers
 │   ├── core/
-│   │   ├── config.py            ← Global config (pydantic-settings reads .env)
-│   │   ├── database.py          ← SQLAlchemy engine / SessionLocal / Base
-│   │   ├── security.py          ← bcrypt hashing + JWT encode/decode + get_current_user/admin
-│   │   ├── llm.py               ← Multi-provider LLM routing (aliyun/amd/ollama) + Embedding
-│   │   │                          + vision/ASR/TTS clients + list_provider_models
-│   │   ├── llm_invoker.py       ← Unified LLM layer: retry/breaker/provider-chain failover/structured output/streaming/token audit
-│   │   ├── checkpointer.py      ← LangGraph PostgresSaver checkpoints (degrades to MemorySaver)
-│   │   ├── reranker.py          ← DashScope qwen3-rerank re-ranking (RRF fallback)
-│   │   ├── mcp_client.py        ← MCP client (AMap weather tool, silent degradation)
-│   │   ├── memory_store.py      ← User preference long-term memory (PostgresStore JSONB)
-│   │   ├── observability.py     ← Langfuse callbacks (degrades to plain logging when disabled)
-│   │   └── report_channels.py   ← Streaming report delta channel (SSE report_delta)
-│   ├── models/                  ← 13 ORM tables
-│   │   ├── user.py / fire_point.py / fire_risk.py / region_boundary.py
-│   │   ├── emergency_resource.py / task.py / report.py
-│   │   ├── kb_document.py / query_history.py / rag_history.py / vision.py
-│   ├── schemas/                 ← Pydantic request/response models (auth/query/rag/agent/report/admin/dashboard)
-│   ├── repositories/            ← fire_repository (fire points/predictions/boundaries) / report_repository
-│   ├── services/
-│   │   ├── query_service.py     ← Dual-engine intent recognition + three intent executors + GeoJSON generation
-│   │   ├── rag_service.py       ← Upload/four-layer extraction/chunking/vectorization/hybrid retrieval/QA
-│   │   └── data_service.py
+│   │   ├── config.py               ← all settings (VERSION = "1.0.1"), REPORT_FOOTER
+│   │   ├── database.py             ← Engine / SessionLocal / get_db
+│   │   ├── security.py             ← JWT sign/verify, password hashing
+│   │   ├── llm.py                  ← get_llm / get_embedding / get_vision_llm /
+│   │   │                              transcribe_audio / synthesize_speech / amd_ocr_pdf
+│   │   ├── llm_invoker.py          ← retry (1s/2s/4s) ×3, breaker (3 failures/60s), provider chain, audit
+│   │   ├── reranker.py             ← qwen3-rerank with RRF fallback
+│   │   ├── memory_store.py         ← PostgresStore preference memory (disabled on failure)
+│   │   ├── mcp_client.py           ← lazy MCP + get_weather_for_city
+│   │   ├── observability.py        ← Langfuse CallbackHandler
+│   │   └── amd_directory.py        ← live AMD tokenfactory catalog crawler
+│   ├── api/v1/routes/
+│   │   ├── dashboard.py
+│   │   ├── query.py
+│   │   ├── rag.py
+│   │   ├── agent.py                ← tasks / SSE / capabilities / status
+│   │   ├── report.py
+│   │   ├── admin.py                ← built-in model catalogs & quota snapshots
+│   │   ├── auth.py
+│   │   └── media.py                ← vision / speech (mounted at /api/v1/vision)
 │   ├── agents/
-│   │   ├── orchestrator_agent.py ← LangGraph StateGraph (8 nodes: parallel fan-out/join + review loop + HITL approval)
-│   │   ├── data_agent.py        ← Fire point query & aggregate statistics
-│   │   ├── gis_agent.py         ← 0.1° grid clustering hotspots + buffer analysis
-│   │   ├── rag_agent.py         ← Knowledge base retrieval node
-│   │   └── report_agent.py      ← LLM five-part Markdown report (template fallback)
-│   ├── workflows/               ← agent_workflow (LangGraph wrapper)
-│   ├── utils/                   ← risk_level (level classification) / geojson
-│   └── api/v1/routes/           ← 8 route modules
-│       ├── auth.py / dashboard.py / query.py / rag.py
-│       ├── agent.py / report.py / admin.py / media.py (vision & speech)
-├── scripts/                     ← Data import & evaluation scripts
-│   ├── init_db.py               ← Enable PostGIS + create tables
-│   ├── import_fire_points.py    ← Yunnan_fire.json → historical_fire_points (5,411 records)
-│   ├── import_predict_risks.py  ← Daily/monthly prediction JSON → predicted_fire_risks
-│   ├── import_region_boundaries.py ← Yunnan_border.json → region_boundaries (16 prefectures)
-│   ├── run_all_imports.py       ← One-click full import (custom paths + timing stats)
-│   ├── eval_regression.py       ← Regression evaluation (golden set, 4 deterministic metrics, offline/live)
-│   └── golden_set.json          ← Golden test cases for regression evaluation (10 cases)
-├── mcp_server/
-│   └── weather_server.py        ← MCP weather data source (FastMCP stdio: AMap geo→adcode→weather)
-├── Dockerfile                   ← Backend image (python:3.12-slim + healthcheck)
-├── docker-compose.yml           ← Full-stack orchestration (db/backend/frontend + optional Langfuse profile)
-├── .env.example                 ← Environment variable template
-├── sql/public.sql               ← Full database export (DDL + data)
-├── data/knowledge_base/         ← Knowledge base upload storage (auto-created)
-├── data/vision_uploads/         ← Fire-recognition image storage (uuid-named)
-├── .env                         ← Runtime configuration
-├── 整体实现.md                   ← Complete implementation doc in graduation-thesis style (architecture/ER/flowcharts)
-└── requirements.txt
+│   │   ├── orchestrator_agent.py   ← LangGraph orchestration (8 nodes + fallback nodes + graph builder)
+│   │   ├── data_agent.py           ← DataAgent: data-query node
+│   │   ├── gis_agent.py            ← GisAgent: GIS analysis node
+│   │   ├── rag_agent.py            ← RagAgent: knowledge retrieval node
+│   │   └── report_agent.py         ← ReportAgent: report generation / review
+│   ├── services/
+│   │   ├── data_service.py         ← dashboard data queries (wraps FireRepository)
+│   │   ├── query_service.py        ← intent parsing (llm / keyword) + executors
+│   │   └── rag_service.py          ← upload / extract / chunk / retrieve / rerank / generate
+│   ├── models/                     ← 13 business tables
+│   ├── schemas/                    ← Pydantic (admin / agent / common / dashboard / query / rag / report / user)
+│   ├── repositories/               ← fire_repository / report_repository
+│   └── utils/
+├── mcp_server/weather_server.py    ← FastMCP stdio: AMap geo → adcode → weather
+├── scripts/
+│   ├── init_db.py
+│   ├── import_fire_points.py / import_predict_risks.py / import_region_boundaries.py
+│   ├── run_all_imports.py
+│   ├── eval_regression.py          ← golden-set regression evaluation
+│   └── golden_set.json
+├── migrations/                     ← SQL migrations
+├── sql/public.sql
+├── docker-compose.yml              ← db / backend / frontend (+ optional langfuse profile)
+├── Dockerfile
+├── requirements.txt
+└── .env.example
 ```
 
 ---
 
-## 4. Core Features in Detail
+## 4. Data Model
 
-### 4.1 Application Entry (main.py)
+**13 business tables**:
 
-- `lifespan` startup hook: `create_all` auto-create tables → idempotent column backfill (compatible with old DBs) → seed admin (admin/123456)
-- CORS middleware allows frontend 5173/4173
-- 8 route modules mounted under `/api/v1/*`, Swagger docs: `http://localhost:8000/docs`
-
-### 4.2 Smart Query (query.py + QueryService)
-
-- **Dual-engine intent recognition**: LLM (qwen-plus, temperature=0.05, prompt built-in 16-prefecture list / season mapping / confidence enums, JSON output) + keyword regex fallback (prefecture short-name mapping "普洱"→"普洱市", "版纳"→"西双版纳傣族自治州"; "春季"→[3,4,5] months)
-- **Three intent executors**: historical fire points (date range + FRP sort) / predicted fire risk (risk_score sort + risk-graded color GeoJSON) / data summary (Top city statistics)
-- **History dedup**: dedup by user + query_text; repeated queries only update time and summary
-
-### 4.3 RAG Knowledge Base (rag.py + RagService)
-
-- **Four-layer PDF text extraction**: pdfplumber → pypdf → PyMuPDF text layer → RapidOCR image recognition (solves scanned pages/custom-font garbling, e.g. GB/T 36743-2018)
-- **Chunking**: RecursiveCharacterTextSplitter (chunk_size=500, overlap=50, Chinese separators `\n\n → \n → 。 → ，` preferred)
-- **Vectorization**: OpenAIEmbeddings (text-embedding-v3, Alibaba Bailian)
-- **Hybrid retrieval**: Chinese word segmentation + vector cosine + keyword weighting (2-char words preferred) → **Rerank re-ranking** (qwen3-rerank; falls back to RRF fusion of the original order when disabled/failed), Top-K chunks; adaptive query rewriting for complex queries (up to 3 retrieval rounds)
-- **QA**: LLM must cite source numbers; explicitly declares when no matching document is found; `POST /ask/stream` SSE streaming (meta→delta→done, partial output never persisted)
-
-### 4.4 Multi-Agent Collaboration (agent.py + OrchestratorAgent)
-
-LangGraph StateGraph state machine (v1.0.1 topology):
-
-```
-parse_task → (query_data → analyze_gis) ∥ retrieve_knowledge → join
-           → generate_report → review_report →(≤2-round loop)→ approval_gate(HITL) → END
-(Orchestrator)  (DataAgent)   (GisAgent)   (RagAgent)  (ReportAgent)  (Reviewer)   (interrupt/resume)
-```
-
-- **Plan-driven routing**: `parse_task` produces a structured TaskPlan; query_data / analyze_gis / generate_report are fixed steps (prevents "finished without a report"), the LLM only decides whether to add knowledge-base retrieval
-- **Parallel fan-out/join**: query_data ∥ retrieve_knowledge run concurrently; the `operator.add` reducer writes increments only, merged at the join barrier
-- **Reflective retry**: when a query returns empty, the LLM reflects, relaxes parameters and re-queries (≤2 rounds)
-- **Review loop + hard guardrails**: low-temperature LLM review + LLM-independent hard guardrails with veto power (≥800 chars / required sections / real-data citations); rejected reports are rewritten with feedback (≤2 rounds)
-- **HITL approval**: `approval_gate` interrupts via `interrupt` (status awaiting_approval); `POST /tasks/{id}/resume` injects approve / edit / reject and resumes on the same thread_id (interrupt state persisted by PostgresSaver)
-- **Async tasks + SSE**: `POST /tasks` returns task_id immediately and executes in the background; node steps are written incrementally (running pre-write + terminal-state overwrite); `GET /tasks/{id}/stream?token=` pushes node-level progress / report deltas / terminal state via SSE (replay after disconnect, 1800s per-connection cap)
-- **Seven-section rigid report template**: 一、执行摘要 Executive Summary / 二、数据来源与分析方法 Data Sources & Methodology / 三、火情数据分析 Fire Data Analysis / 四、高风险区域识别 High-Risk Area Identification / 五、重点巡防建议 Key Patrol Recommendations / 六、结论与展望 Conclusion & Outlook / 附：参考依据 Appendix: References (section titles and order are fixed, ≥800 chars, real-data citations, developer signature auto-appended); reports are auto-classified by query semantics as daily/weekly/monthly/special and support type filtering in the report center
-- Tasks & steps (with JSON payloads) persist to `agent_tasks` / `agent_task_steps`; reports persist to `analysis_reports` (with llm_provider / llm_model / llm_tokens audit fields); soft delete for reports (user self-delete `hidden` / admin delete `deleted`), task detail `include_deleted` powers frontend history replay
-
-### 4.5 System Admin (admin.py)
-
-- **Config hot reload**: `setattr(settings, ...)` takes effect in memory + `dotenv.set_key` writes back to .env, **no restart needed**
-- **Masking**: API Key `sk-***xxx` (first 3 / last 3), database URL only shows the part after `@`
-- **Connection tests**: `/test/db` (SELECT 1), `/test/llm` (real invoke)
-- **Bailian free-quota model catalog**: `GET /llm/models` calls the provider `/models` endpoint to validate availability in real time, cross-checks against the built-in free-quota catalog (5 categories: LLM/vision/multimodal/speech/embedding, 35 free models), sorted by "free first → longer validity → currently in use → verified", with masked key overview and console links; one-click 「Use」 switching for all model types (writes .env with hot reload)
-- **System logs**: `log_system_event()` ring buffer of 200 entries
-- **User management**: admin only; role change blocks self-modification, user deletion blocks self-deletion
-
-### 4.6 Vision & Speech Module (media.py · /api/v1/vision)
-
-**AI fire image recognition**:
-
-- `POST /analyze`: upload jpg/png/webp/bmp (≤10MB) → base64 multimodal message (built-in forest fire monitoring expert prompt) → vision model outputs **four-part structured Markdown** (fire determination: visible flame/smoke/no anomaly / scene description / severity: minor–critical four levels / handling suggestions); non-fire images are explicitly labeled
-- Image stored under `data/vision_uploads/` with uuid name, recognition result persisted to `vision_history` (user-isolated)
-- History list/detail/delete/image authenticated stream (`GET /image/{id}`) all enforce user data isolation
-
-**Speech Recognition (ASR) & Speech Synthesis (TTS)**:
-
-| Capability | Endpoint | Implementation |
-|---|---|---|
-| Speech recognition | `POST /audio/transcriptions` | Bailian `chat/completions` + `input_audio` **data URI** format (raw base64 reports "URL invalid"); wav/mp3/opus/aac/amr, ≤20MB |
-| Speech synthesis | `POST /audio/speech` | Bailian **native** multimodal-generation endpoint (compat mode has no /audio/speech), `voice` (Cherry) required, downloads audio URL as wav stream; text limited to 500 chars |
-
-> ASR / TTS are fixed to Bailian (ASR_MODEL / TTS_MODEL), unaffected by ACTIVE_LLM_PROVIDER switching; the vision model routes by VISION_PROVIDER (aliyun Bailian / amd GPU Cloud); returns a friendly message without throwing when no key is configured.
-
-### 4.7 LLM Multi-Provider Routing (core/llm.py)
-
-```
-get_llm() ─── ACTIVE_LLM_PROVIDER (.env / online switch in admin page)
-   ├─ aliyun → ChatOpenAI(Bailian compat endpoint, qwen-plus)
-   ├─ amd    → ChatOpenAI(AMD endpoint, DeepSeek-V4-Flash)
-   └─ ollama → ChatOpenAI(localhost:11434/v1, qwen2.5:7b)
-
-get_embedding()     ─── always Alibaba Bailian text-embedding-v3
-get_vision_llm()    ─── routed by VISION_PROVIDER (aliyun Bailian / amd GPU Cloud)
-transcribe_audio()  ─── always Alibaba Bailian ASR_MODEL (qwen3-asr-flash)
-synthesize_speech() ─── always Alibaba Bailian TTS_MODEL (qwen3-tts-flash)
-list_provider_models() → calls each provider's /models endpoint to validate key-accessible models
-```
-
-> **v1.0.1**: all business code calls the LLM through `app/core/llm_invoker.py` (`invoke_llm` / `invoke_structured` / `stream_llm`), which layers exponential-backoff retry → circuit breaker (3 fails / 60s cooldown) → provider-chain degradation → rule-based fallback, and carries provider / model / tokens / degraded audit fields; `get_llm` is now only a low-level factory and new code must not call it directly.
+| # | Table | Description |
+| - | ----- | ----------- |
+| 1 | `users` | username / email / password_hash / role (admin \| user) |
+| 2 | `fire_points` | Historical fire points (lat/lon, brightness, confidence, time, province/city/county) |
+| 3 | `fire_risks` | Predicted risk (Year / Month / Day / City / Final_Fire_Index / Pred_Fire_Count / Risk_Score / Pred_Fire_Risk) |
+| 4 | `regions` | Administrative boundaries (PostGIS geometry, prefecture / county) |
+| 5 | `resources` | Emergency resources (teams / supplies / locations) |
+| 6 | `agent_tasks` | status / query / parsed_intent / report_id / llm_provider / llm_model / llm_tokens / llm_degraded / user_id / timestamps |
+| 7 | `agent_task_steps` | step_name / status / detail / timestamps; incremental upsert on `(task_id, step_name)` |
+| 8 | `analysis_reports` | report_type / title / content / summary / llm_provider / llm_model / llm_tokens / llm_degraded / user_id / soft-delete flags |
+| 9 | `kb_documents` | filename / file_type / file_path / category / chunk_count / user_id |
+| 10 | `kb_chunks` | content / embedding / index |
+| 11 | `query_history` | query / result JSON, deduplicated per user + text |
+| 12 | `rag_history` | query / answer / sources / result JSON |
+| 13 | `vision_history` | image path / Markdown result / timestamps |
 
 ---
 
-## 5. Database Design
+## 5. API Reference
 
-The database has **13 business tables** (plus PostGIS system tables); full DDL is in `sql/public.sql`:
+Base path `/api/v1`. **Every endpoint except `/`, `/health`, `/auth/login`, `/auth/register` and `/dashboard/summary` requires `Authorization: Bearer <JWT>`.** `/dashboard/summary` is the only deliberately anonymous business endpoint (the public portal and login page show real aggregate counters before sign-in; it returns aggregates only, never per-row data). Auth requirements are enforced statically by `scripts/check_auth_coverage.py`: all 62 routes must declare their policy explicitly, and a new undeclared endpoint fails the check.
 
-| Category | Table | Description | Data Scale |
-|---|---|---|---|
-| Business data | `historical_fire_points` | Historical fire points (geom POINT 4326, frp, confidence; date/city/confidence indexes) | **5,411 records** |
-| Business data | `predicted_fire_risks` | Predicted fire risk (daily/monthly dual views, fire_level 1-5, risk_score) | 2025—2026 full |
-| Business data | `region_boundaries` | 16 prefecture boundaries (MULTIPOLYGON 4326) | 16 records |
-| Business data | `emergency_resources` | Emergency resources (reserved) | To be imported |
-| Platform data | `users` | Users (bcrypt hash, role user/admin) | Grows with registrations |
-| Platform data | `query_history` | Query history (dedup by user + text) | Grows with usage |
-| Platform data | `rag_history` | RAG QA history | Grows with usage |
-| Platform data | `agent_tasks` | Agent tasks (status/report_id FK) | Grows with usage |
-| Platform data | `agent_task_steps` | Task steps (JSON payloads, one-to-many cascade delete) | Grows with usage |
-| Platform data | `analysis_reports` | Analysis reports (Markdown content) | Grows with usage |
-| Platform data | `kb_documents` | KB documents (state machine pending→processing→ready/failed) | Grows with uploads |
-| Platform data | `kb_chunks` | KB chunks (content/token_count/embedding) | Grows with uploads |
-| Platform data | `vision_history` | AI fire recognition history (image path + Markdown result + model name) | Grows with recognitions |
-
-**Relations**: `agent_tasks 1—N agent_task_steps`, `agent_tasks N—1 analysis_reports`, `kb_documents 1—N kb_chunks`, `users 1—N query_history/rag_history/agent_tasks/analysis_reports/kb_documents/vision_history`.
-
-E-R diagram and full table structure details are in the Implementation doc (Chapter 5).
-
----
-
-## 6. API Reference
-
-Unified response format: `{ code, message, data }`.
-
-### Auth `/api/v1/auth`
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/register` | - | Register (dedup + bcrypt + JWT, logged in right after registration) |
-| POST | `/login` | - | Login (JWT 24h) |
-| GET | `/me` | Bearer | Current user info |
-
-### Dashboard `/api/v1/dashboard`
+### 5.1 Dashboard (`/dashboard`)
 
 | Method | Path | Description |
-|---|---|---|
-| GET | `/history-fires` | Historical fire points (date/city/confidence/pagination, max 5,000) |
-| GET | `/predict-risks` | Predicted fire risk (year/month/day/daily\|monthly/city) |
-| GET | `/summary` | Summary stats (total/high-confidence/avg FRP/Top 5 cities) |
+| ------ | ---- | ----------- |
+| GET | `/dashboard/history-fires` | Historical fire points (limit / time / area filters, default cap 5000) |
+| GET | `/dashboard/predict-risks` | Predicted risk (daily / monthly, filtered by Year-Month-Day) |
+| GET | `/dashboard/summary` | Aggregate statistics |
 
-### Smart Query `/api/v1/query`
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/parse` | - | Intent parsing only (LLM/keyword) |
-| POST | `/execute` | - | Parse + execute + four-dimensional result + history persistence |
-| GET | `/history` | Bearer | Current user query history (user-isolated) |
-| DELETE | `/history/{id}` | Bearer | Delete a single history record |
-
-### Knowledge Base `/api/v1/rag`
+### 5.2 Smart Query (`/query`)
 
 | Method | Path | Description |
-|---|---|---|
-| POST | `/ask` | RAG QA (answer + citations + llm_used) |
-| POST | `/ask/stream` | **RAG streaming QA** (SSE: meta→delta→done) |
-| GET | `/history` | QA history (user-isolated) |
-| DELETE | `/history/{id}` | Delete QA history |
-| POST | `/documents` | Upload document (multipart, category form field) |
-| GET | `/documents` | Document list (user-isolated) |
-| DELETE | `/documents/{id}` | Delete document (file + chunk cascade) |
+| ------ | ---- | ----------- |
+| POST | `/query/parse` | Parse only, does not execute |
+| POST | `/query/execute` | Parse + execute + persist (dedup per user + text) |
+| GET | `/query/history` | History (per-user isolation) |
+| GET | `/query/history/{history_id}` | Detail (full result replay) |
+| DELETE | `/query/history` | Clear history |
+| DELETE | `/query/history/{history_id}` | Delete one entry |
 
-### Agent `/api/v1/agent`
-
-| Method | Path | Description |
-|---|---|---|
-| POST | `/tasks` | Create task (**returns task_id immediately, executes in background**) |
-| GET | `/tasks` | Task list (with report provider / detailed model name) |
-| GET | `/tasks/{task_id}` | Task detail (execution steps + report, history replay) |
-| GET | `/tasks/{task_id}/stream?token=` | **SSE real-time progress** (node steps / report deltas / approval / terminal state, replay after disconnect) |
-| POST | `/tasks/{task_id}/resume` | **HITL approval resume** (approve / edit / reject) |
-| DELETE | `/tasks/{task_id}` | Delete task (cascade steps) |
-| GET | `/capabilities` | "System capabilities" panel (real runtime state of orchestration / breaker / checkpoints / MCP / observability) |
-| GET | `/status` | Status of the 5 Agents |
-
-### Reports `/api/v1/reports`
+### 5.3 Knowledge Base (`/rag`)
 
 | Method | Path | Description |
-|---|---|---|
-| GET | `/list` | List (page/page_size/report_type, user-isolated) |
-| GET | `/{id}` | Detail (Markdown content) |
-| POST | `/generate` | Generate/save report |
-| DELETE | `/{id}` | Delete report |
-| GET | `/export/{id}?format=md\|html` | Export (md attachment / HTML print template) |
+| ------ | ---- | ----------- |
+| POST | `/rag/ask` | RAG answer (Adaptive, persisted) |
+| POST | `/rag/ask/stream` | Streaming RAG (SSE: `meta` → `delta` → `done`, partial answers not persisted) |
+| GET | `/rag/history` | Q&A history |
+| GET | `/rag/history/{history_id}` | Q&A detail |
+| DELETE | `/rag/history` | Clear |
+| DELETE | `/rag/history/{history_id}` | Delete one |
+| POST | `/rag/documents` | Upload (FormData: file + category) |
+| GET | `/rag/documents` | List (includes file_type / chunk_count) |
+| GET | `/rag/documents/{doc_id}/content` | Full text (chunks concatenated, owner/admin only) |
+| GET | `/rag/documents/{doc_id}/file` | Original file (FileResponse, RFC 5987 name, inline) |
+| DELETE | `/rag/documents/{doc_id}` | Delete (cascades chunks) |
 
-### System Admin `/api/v1/admin`
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| GET | `/status` | Login | Runtime status overview |
-| GET | `/config` | Login | Current config (**masked**) |
-| POST | `/config` | Login | Update config (**writes .env with hot reload**) |
-| POST | `/test/db` | Login | Database connection test |
-| POST | `/test/llm` | Login | LLM connection test (real invoke) |
-| GET | `/logs?limit=` | Login | System logs (ring buffer of 200) |
-| GET | `/llm/models?provider=` | Login | Provider model list + Bailian free-quota catalog (5 categories) + key overview |
-| GET | `/users` | **Admin** | User list |
-| PUT | `/users/{id}/role` | **Admin** | Change role (self-change blocked) |
-| DELETE | `/users/{id}` | **Admin** | Delete user (self-delete blocked) |
-
-### Vision & Speech `/api/v1/vision`
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/analyze` | Bearer | **Fire image recognition** (qwen-vl multimodal, persisted to vision_history) |
-| GET | `/history` | Bearer | Recognition history list (user-isolated, max 100) |
-| GET | `/history/{id}` | Bearer | Recognition history detail |
-| DELETE | `/history/{id}` | Bearer | Delete recognition record (incl. local image) |
-| GET | `/image/{id}` | Bearer | Authenticated image stream (FileResponse) |
-| POST | `/audio/transcriptions` | Bearer | **Speech recognition ASR** (wav → text, qwen3-asr-flash) |
-| POST | `/audio/speech` | Bearer | **Speech synthesis TTS** (text → wav audio stream, qwen3-tts-flash) |
-
-### Others
+### 5.4 Agent (`/agent`)
 
 | Method | Path | Description |
-|---|---|---|
-| GET | `/` | Service info |
+| ------ | ---- | ----------- |
+| GET | `/agent/tasks` | Task list (owner isolation / admin all, limit 50, joins report model + `progress`/`elapsed_seconds`/`total_tokens`) |
+| GET | `/agent/tasks/{task_id}` | Detail (steps + report + llm_used + audit + `elapsed_seconds` / `total_tokens`, `null` when unavailable) |
+| DELETE | `/agent/tasks/{task_id}` | Delete task (cascades steps) |
+| POST | `/agent/tasks` | Create task (returns task_id immediately, runs in background) |
+| POST | `/agent/tasks/{task_id}/resume` | Approval resume (approve / edit / reject). Gate-not-ready / duplicate submits return **409 + semantic code**: `approval_not_ready` / `already_resumed` / `approval_busy` / `task_finished` / `checkpoint_unavailable` (refused when checkpoint degraded to MemorySaver) / `task_busy` (per-task resume lock) |
+| GET | `/agent/tasks/{task_id}/stream` | SSE (auth via `Authorization` header, **token never in the URL**): `report_snapshot` (first frame on (re)connect, replays this round's text/thinking) / `step` / `report_think` (with `run`) / `think_reset` (loop truncation) / `approval` / `report_delta` / `report` / `error` |
+| GET | `/agent/capabilities` | Capability manifest (real runtime state) |
+| GET | `/agent/status` | Status of the 6 agents (including Reviewer) |
+
+### 5.5 Reports (`/reports`)
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| GET | `/reports/list` | List (page / page_size / report_type) |
+| GET | `/reports/{report_id}` | Detail |
+| POST | `/reports/generate` | Generate a report directly (bypasses agent orchestration) |
+| DELETE | `/reports/{report_id}` | Delete (user soft delete / admin global soft delete) |
+| GET | `/reports/export/{report_id}` | Export (`format=md\|html`) |
+
+### 5.6 Admin (`/admin`, admin only)
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| GET | `/admin/config` | Read config (API keys masked as `key[:3] + "****" + key[-3:]`) |
+| POST | `/admin/config` | Save config (writes `.env` + `setattr` hot reload, skips masked values) |
+| POST | `/admin/test/db` | Database connection test |
+| POST | `/admin/test/llm` | Real LLM invoke test |
+| GET | `/admin/llm/models?provider=` | Model catalog (`aliyun\|amd\|ollama\|longcat`) |
+| GET | `/admin/bailian/quota` | Bailian free-tier quota snapshot |
+| GET | `/admin/status` | System status (DB / LLM / models / 6 agents) |
+| GET | `/admin/logs?limit=` | Logs (200-entry ring buffer) |
+| GET | `/admin/users` | User list |
+| PUT | `/admin/users/{user_id}/role` | Change role (self-change blocked) |
+| DELETE | `/admin/users/{user_id}` | Delete user (self-delete blocked) |
+
+### 5.7 Auth (`/auth`)
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| POST | `/auth/register` | Register and sign in |
+| POST | `/auth/login` | Login, returns `access_token` + `user` |
+| GET | `/auth/me` | Current user |
+| PUT | `/auth/me` | Update email |
+| PUT | `/auth/me/password` | Change password (old password verified; revokes old tokens) |
+
+- **15-hour sliding session**: `exp = iat + 15h`; every authenticated response may carry `X-Token-Refresh` (exposed via CORS `expose_headers`) and the frontend replaces its token when there is real user activity — you only sign in again after 15 hours of inactivity;
+- **Revocation**: `users.token_version` (the `tv` claim) must match; legacy tokens without `tv` count as 0, so deploying does not log everyone out.
+
+### 5.8 Vision & Speech (`/vision`)
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| POST | `/vision/analyze` | Fire-image recognition (vision model, persisted) |
+| GET | `/vision/history` | Recognition history |
+| GET | `/vision/history/{rec_id}` | One record |
+| DELETE | `/vision/history/{rec_id}` | Delete record |
+| GET | `/vision/image/{rec_id}` | Authenticated image binary |
+| POST | `/vision/audio/transcriptions` | ASR (wav upload) |
+| POST | `/vision/audio/speech` | TTS (returns audio binary) |
+
+### 5.9 Service info
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| GET | `/` | Service info (name / version / docs URL; `/docs` and `/redoc` are disabled when `ENV=production`) |
 | GET | `/health` | Health check |
-| GET | `/docs` | Swagger interactive docs |
 
 ---
 
-## 7. Environment Requirements
+## 6. Agent Orchestration
 
-| Component | Requirement |
-|---|---|
-| OS | Windows / Linux / macOS |
-| Python | **3.10+** (a dedicated conda env is recommended) |
-| PostgreSQL | 14+ with **PostGIS** extension enabled |
-| Network | Needs access to Alibaba Bailian / AMD endpoints (offline can switch to local Ollama) |
-| Containerization (optional) | Docker + Docker Compose (one-click db/backend/frontend, optional Langfuse observability profile) |
+### 6.1 Graph
+
+```
+                    ┌─────────────┐
+                    │ parse_task  │  intent → TaskPlan (sub-task list)
+                    └──────┬──────┘
+              ┌────────────┴────────────┐
+              ▼                         ▼
+      ┌──────────────┐         ┌────────────────────┐
+      │  query_data  │         │ retrieve_knowledge │
+      └──────┬───────┘         └─────────┬──────────┘
+             ▼                           │
+      ┌──────────────┐                   │
+      │ analyze_gis  │                   │
+      └──────┬───────┘                   │
+             └────────────┬──────────────┘
+                          ▼
+                     ┌─────────┐
+                     │  join   │  merge parallel branches
+                     └────┬────┘
+                          ▼
+                 ┌─────────────────┐
+                 │ generate_report │  review notes / weather / preferences / stream deltas
+                 └────────┬────────┘
+                          ▼
+                 ┌─────────────────┐
+                 │  review_report  │  low-temperature review + hard guards, ≤2 rounds
+                 └────────┬────────┘
+                          ▼
+                 ┌─────────────────┐
+                 │  approval_gate  │  interrupt() human approval
+                 └────────┬────────┘
+                          ▼
+                         END
+```
+
+- **8 nodes**: `parse_task`, `query_data`, `analyze_gis`, `retrieve_knowledge`, `join`, `generate_report`, `review_report`, `approval_gate`.
+- **Parallel**: `query_data → analyze_gis` and `retrieve_knowledge` fan out, `join` merges; `analyze_gis` is a no-op when the plan has no GIS task.
+- **Reflection**: `parse_task` may emit a `QueryRetryPlan`; at most 2 rewrite rounds.
+- **Review (three states)**: `review_report` uses a low-temperature LLM plus hard guards (≥800 chars, required sections, real data):
+  - `passed`: review succeeded with no issues → goes to approval;
+  - `returned`: concrete issues found → rewrite, **at most 2 rounds**, then human review takes over (`forced`, `review_status=degraded`);
+  - `degraded`: review itself failed (LLM error / parse failure / rejection without concrete issues) → **no rewrite**, report goes straight to human approval (`review_status=degraded` + `degraded_reason`, step not marked failed).
+  - The verdict is persisted in step output as `review_status`; the frontend colors the three states accordingly.
+- **Two-round thinking**: `generate_report` streaming embeds loop detection (exact + bigram near-duplicate clusters × frequency + suffix blocks). On loop/limit hit, thinking is truncated at a sentence boundary (`think_reset` frame tells the frontend to drop the repeated tail) and a **second round starts immediately** (run+1, prompt injects the truncated summary and forbids repetition; budget 6k/150s for round 1, 12k/180s for round 2), at most 2 rounds; thinking is persisted per round in `thinking_rounds`.
+- **HITL**: `approval_gate` pauses via `langgraph.types.interrupt()`; `resume` supports three actions:
+  - `approve`: finalize the draft as-is;
+  - `edit`: finalize with edited `content`;
+  - `reject`: regenerate with a `comment`.
+- **Fallback**: `_make_fallback_nodes` template nodes run when no LLM is available (review auto-passes), so tasks still complete.
+
+### 6.2 Task state machine
+
+```
+running → awaiting_approval → running → completed
+                                   └──→ failed
+```
+
+- Task creation returns `task_id` immediately; `_spawn_task` runs in the background and `_bg_tasks` keeps a reference to prevent GC.
+- Every node transition upserts `agent_task_steps` on `(task_id, step_name)` (running pre-write + terminal overwrite).
+- `resume` is limited to the owner/admin and requires `awaiting_approval`.
+
+### 6.3 SSE protocol
+
+| Event `type` | Fields | Description |
+| ------------ | ------ | ----------- |
+| `report_snapshot` | `run` / `report` / `think` | **First frame on connect**: incremental copy of this round's report and thinking (so switching pages / refreshing mid-stream loses nothing; omitted when nothing produced yet) |
+| `step` | `step.step` / `step.status` / `step.output` | Node start (pre-written running row) / end (completed / failed / skipped) |
+| `report_think` | `run` / `text` | Thinking increments (`run` = generation round, increments on rewrite / second round) |
+| `think_reset` | `run` / `text` | Loop truncation: frontend replaces this round's live thinking with `text`, next run+1 starts a new round |
+| `report_delta` | `run` / `text` | Incremental report text |
+| `approval` | `data` | Awaiting approval with the task detail (incl. draft) |
+| `report` | `data` | Final full report (incl. steps) |
+| `error` | `message` | Execution error |
+
+- Historical steps are replayed on connect, followed by a `report_snapshot` frame (the backend keeps a per-task, per-round in-process copy of streamed text and drops it on terminal state);
+- Auth uses the `Authorization` header (the frontend reads a fetch stream, not `EventSource`; a token in the query string would land in Nginx access logs);
+- The stream waits 0.6s before closing to flush pending `report_delta`.
+- Max connection lifetime `_SSE_MAX_SECONDS = 1800`.
+- `X-Accel-Buffering: no` prevents Nginx buffering.
 
 ---
 
-## 8. Quick Start
+## 7. LLM Access & Degradation
 
-### 8.0 Docker Compose One-Click Deployment (new in v1.0.1, recommended)
+### 7.1 Four providers
 
-```bash
-cp .env.example .env          # Prepare environment variables (fill in real keys)
-docker compose up -d          # Bring up the full stack: postgis/db + backend + frontend
-docker compose --profile observability up -d   # Optional: add self-hosted Langfuse observability
+| Provider | Config | Default model | Notes |
+| -------- | ------ | ------------- | ----- |
+| Alibaba Bailian | `LLM_API_KEY` / `LLM_API_BASE` | `qwen-plus` | LLM + Embedding + Vision + ASR + TTS primary path |
+| AMD GPU Cloud | `AMD_API_KEY` / `AMD_API_BASE` | `DeepSeek-V4-Flash` | OpenAI-compatible; four capability classes |
+| Ollama | `OLLAMA_API_BASE` | `qwen2.5:7b` | Local deployment |
+| LongCat | `LONGCAT_API_KEY` / `LONGCAT_API_BASE` | `LongCat-2.5-Preview` | OpenAI-compatible; static catalog + `/models` validation |
+
+`ACTIVE_LLM_PROVIDER=aliyun|amd|ollama|longcat` selects the primary provider.
+
+### 7.2 Unified `llm_invoker`
+
+- **Retry**: exponential backoff 1s / 2s / 4s, up to 3 attempts.
+- **Circuit breaker**: 3 consecutive failures → 60s cooldown (`_Breaker`, exposed via `breaker_status()`).
+- **Fallback chain**: active provider first, then `aliyun → amd → ollama → longcat`.
+- **Rule fallback**: keyword/template logic when all providers fail, so tasks never hard-fail.
+- **Audit**: returns `provider` / `model` / `tokens` / `degraded`, persisted on tasks and reports.
+- Public functions: `invoke_llm`, `invoke_structured`, `stream_llm`.
+
+### 7.3 Capability routing
+
+| Capability | Config | Values | Default | Degradation |
+| ---------- | ------ | ------ | ------- | ----------- |
+| Vision | `VISION_PROVIDER` / `VISION_MODEL` | `aliyun` / `amd` | `aliyun` / `qwen-vl-plus` | Routed by `VISION_PROVIDER` (model must match the selected provider) |
+| ASR | `ASR_MODEL` | — | `qwen3-asr-flash` | Bailian data URI upload |
+| TTS | `TTS_PROVIDER` / `TTS_MODEL` | `aliyun` / `amd` | `aliyun` / `qwen3-tts-flash` | Bailian failure auto-falls back to AMD OmniVoice `/audio/speech` (wav) |
+| Document OCR | `OCR_PROVIDER` / `OCR_MODEL` | `local` / `amd` | `local` / `MinerU2.5-Pro` | AMD first, falls back to local RapidOCR |
+
+### 7.4 Admin model catalogs
+
+- **Bailian**: built-in `BAILIAN_FREE_MODELS` (5 categories, 30+ models) + live free-tier validation; `MODEL_CATEGORIES` / `BAILIAN_CONSOLE_URLS`; ordering free-first → longer validity → current → verified.
+- **AMD**: `app/core/amd_directory.py` crawls `developer.amd.com.cn` tokenfactory live (bootstrap POST + templates GET + per-card detail); capability keys `text/vision/speech/ocr`; tier mapping `dedicated` / no badge → `paid`, `limited` → `limited_free`, `free` → `free`; no cache, empty list on failure.
+- **LongCat**: static `LONGCAT_MODELS` (`LongCat-2.5-Preview`, `LongCat-2.0`) + `/models` validation.
+- **Ollama**: `/models` listing only.
+- One-click switch: `POST /admin/config` writes `.env` and hot-reloads via `setattr`, no restart needed.
+
+---
+
+## 8. RAG Pipeline
+
+```
+upload → extract → chunk → embed → persist
+                          │
+question → Adaptive classification ─┼── hybrid retrieval (vector + keyword)
+           (simple/complex)          │        └→ qwen3-rerank (RRF fallback)
+                                     │
+                                     └→ prompt (numbered citations) → LLM → answer + sources
 ```
 
-- Backend `Dockerfile`: python:3.12-slim + dependency-layer caching + `/health` healthcheck;
-- The frontend image ships an nginx config: the `/api` reverse proxy **disables buffering (proxy_buffering off) with a 1800s timeout**, so SSE real-time progress / report deltas / RAG streaming are never buffered;
-- backend starts automatically after the db healthcheck turns ready (in-container DATABASE_URL overridden to host `db`), data persisted in volumes;
-- Once up: frontend at `http://localhost:8080`, backend Swagger at `http://localhost:8000/docs`.
+- **Four-layer PDF extraction** (`_extract_pdf`): pdfplumber → pypdf → PyMuPDF (fitz) → OCR; garbled or scanned pages detected automatically.
+  - With `OCR_PROVIDER=amd`, `amd_ocr_pdf` runs first (page PNG → `/ocr` → Markdown, model `MinerU2.5-Pro`).
+  - Falls back to local `_ocr_pdf` (RapidOCR).
+- **Chunking**: Chinese-aware `_chunk_text`, size 500 / overlap 50 (`KB_CHUNK_SIZE` / `KB_CHUNK_OVERLAP`).
+- **Retrieval**: `retrieve()` returns `items` / `matched_chunks` / `method` (`hybrid` / `keyword` / `none`, optionally `+rerank`) / `reranked` / `keywords` / `vector_enabled`; `top_k` defaults to 5.
+- **Rerank**: `qwen3-rerank` (`RERANK_ENABLED` / `RERANK_MODEL`), falls back to RRF.
+- **Adaptive RAG**: `_classify_query_complexity` labels `simple` / `complex`; complex queries get up to 3 LLM rewrite rounds.
+- **Generation**: `_rag_prompt` requires numbered citations; `answer` is non-streaming and `answer_stream` is streaming.
+- **Stream protocol**: `meta` (sources / retrieval method) → `delta` → `done`; partial answers are not persisted (thread bridged via `asyncio.Queue`).
+- **Document reading**:
+  - `GET /documents/{id}/content`: concatenates chunks in order.
+  - `GET /documents/{id}/file`: `FileResponse` with RFC 5987 filename, `inline` for in-page preview.
 
-### 8.1 Prepare the Database (one-time)
+---
 
-1. Install PostgreSQL 14+, enable the PostGIS extension;
-2. Create an empty database `fire_agent`:
+## 9. Memory · Tools · Observability · Evaluation · Red Teaming
 
-```sql
-CREATE DATABASE fire_agent;
--- After switching to fire_agent:
-CREATE EXTENSION IF NOT EXISTS postgis;
-```
+| Capability | Implementation | Degradation |
+| ---------- | -------------- | ----------- |
+| Preference memory | `app/core/memory_store.py`, `PostgresStore`, namespace `("prefs", "user-{id}")`, key `analysis`; `_PrefExtract` extracts cities / period; persisted after a task, injected by ReportAgent | Failure sets `_store_disabled`; main flow unaffected |
+| Checkpointer | `PostgresSaver` (`langgraph-checkpoint-postgres`) | Falls back to `MemorySaver` |
+| MCP tool | `app/core/mcp_client.py` lazily loads `MultiServerMCPClient` (stdio `mcp_server.weather_server`); `get_weather_for_city` returns an empty string on failure | Reports skip weather when MCP is unavailable |
+| Observability | `app/core/observability.py`: `build_callback_config(task_id, thread_id)` → Langfuse `CallbackHandler` | Returns `None` when disabled or no keys |
+| Evaluation | `scripts/golden_set.json` + `scripts/eval_regression.py`; `/agent/capabilities` reports golden-case count | Skipped without an LLM |
+| Red teaming | `GAUNTLET_CHAOS` / `GAUNTLET_FAULTS_PATH` / `GAUNTLET_SEED` / `GAUNTLET_SYS_CANARY`; `_chaos_wrap` injects faults, `_guard_canary_output` blocks canary leaks | All off by default; no production impact |
 
-### 8.2 Install Dependencies & Configure
+---
+
+## 10. Startup & Configuration
+
+### 10.1 Startup sequence (lifespan)
+
+1. `Base.metadata.create_all`.
+2. **Idempotent column patching**: `kb_documents.user_id`; `analysis_reports.user_id / llm_provider / llm_model / llm_tokens / llm_degraded`; `agent_tasks.user_id`; `query_history.result`; `rag_history.result`.
+3. Seed admin `admin / 123456` (skipped if present).
+4. **Startup self-healing**:
+   - all `running` tasks are marked `failed` ("服务重启导致任务中断，请重新发起任务");
+   - zombie `running` step rows are cleaned up;
+   - `awaiting_approval` tasks are preserved and can still be approved.
+5. Mount 8 routers; CORS defaults to `5173` / `4173`.
+
+### 10.2 Local startup
 
 ```bash
-# 1. Create and activate a Python environment
-conda create -n fire_agent_back python=3.10
-conda activate fire_agent_back
-
-# 2. Enter the project directory and install dependencies
 cd fire_agent_back
+conda create -n fire_agent_back python=3.11 -y
+conda activate fire_agent_back
 pip install -r requirements.txt
 
-# 3. Create .env in the project root (see Section 10 for configuration)
-```
+# prepare .env (see .env.example)
+python scripts/init_db.py            # create tables + seed (lifespan also does this)
+python scripts/run_all_imports.py    # import fire points / predictions / boundaries (optional)
 
-### 8.3 Import Data & Start
-
-```bash
-# 4. One-click data import (tables → boundaries → fire points → predictions)
-python scripts/run_all_imports.py
-
-# 5. Start the service
 uvicorn app.main:app --reload --port 8000
 ```
 
-After a successful start:
+- Swagger: http://localhost:8000/docs
+- Health: http://localhost:8000/health
 
-- Service URL: `http://localhost:8000`
-- Swagger docs: `http://localhost:8000/docs`
-- Health check: `http://localhost:8000/health`
-- **Default admin**: `admin / 123456` (auto-created on first start, skipped if it already exists)
+### 10.3 Environment variables (defaults from `app/core/config.py`)
 
-### 8.4 Start the Frontend (companion)
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `VERSION` | `1.0.1` | Service version |
+| `ENV` | `development` | `development` / `production`; production disables `/docs`, `/redoc` and enables the secret self-check |
+| `JWT_SECRET` | empty (blank in the example) | **You must supply a random value**: `python -c "import secrets;print(secrets.token_urlsafe(48))"`; production refuses to boot on empty / <32 bytes / a placeholder ever published in the repo |
+| `ADMIN_INIT_PASSWORD` | empty | Seed admin password on first init; **production refuses to start when empty**, development falls back to `123456` (local only) |
+| `CORS_ORIGINS` | `["http://localhost:5173","http://localhost:4173"]` | JSON array; must include the real frontend origin |
+| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/fire_agent` | PostGIS database |
+| `AMAP_KEY` | empty | AMap weather / MCP |
+| `ACTIVE_LLM_PROVIDER` | `aliyun` | `aliyun` / `amd` / `ollama` / `longcat` |
+| `LLM_API_KEY` / `LLM_API_BASE` | empty / Bailian default | Bailian |
+| `LLM_MODEL` | `qwen-plus` | Primary LLM |
+| `EMBEDDING_MODEL` | `qwen3.7-text-embedding-flash` | Always Bailian |
+| `VISION_PROVIDER` / `VISION_MODEL` | `aliyun` / `qwen-vl-plus` | Vision recognition |
+| `ASR_MODEL` | `qwen3-asr-flash` | Speech transcription |
+| `TTS_PROVIDER` / `TTS_MODEL` | `aliyun` / `qwen3-tts-flash` | Speech synthesis |
+| `OCR_PROVIDER` / `OCR_MODEL` | `local` / `MinerU2.5-Pro` | Document OCR (`local` / `amd`) |
+| `AMD_API_KEY` / `AMD_API_BASE` / `AMD_MODEL` | empty / `https://developer.amd.com.cn/radeon/v1` / `DeepSeek-V4-Flash` | AMD GPU Cloud |
+| `OLLAMA_API_BASE` / `OLLAMA_MODEL` | `http://localhost:11434/v1` / `qwen2.5:7b` | Ollama |
+| `LONGCAT_API_KEY` / `LONGCAT_API_BASE` / `LONGCAT_MODEL` | empty / `https://api.longcat.chat/openai` / `LongCat-2.5-Preview` | LongCat |
+| `QWEN3_8_*` | — | qwen3-8 time window |
+| `KB_UPLOAD_DIR` | `data/knowledge_base` | KB original files |
+| `KB_CHUNK_SIZE` / `KB_CHUNK_OVERLAP` | `500` / `50` | Chunking |
+| `KB_TOP_K` | `5` | Retrieval size |
+| `RERANK_ENABLED` / `RERANK_MODEL` | on / `qwen3-rerank` | Rerank |
+| `AGENT_REQUIRE_APPROVAL` | on | HITL approval switch |
+| `LLM_STREAM_ENABLED` | on | Report streaming deltas |
+| `PREFERENCES_ENABLED` | on | Preference memory |
+| `MCP_ENABLED` | on | MCP weather tool |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` | empty | Langfuse |
+| `GAUNTLET_CHAOS` / `GAUNTLET_FAULTS_PATH` / `GAUNTLET_SEED` / `GAUNTLET_SYS_CANARY` | `False` / empty / `42` / empty | AgentGauntlet red teaming |
+| `REPORT_FOOTER` | system name / developer / email / repos / demo / GitHub | Report footer |
+
+> `.env.example` covers the core items; for `LONGCAT_*`, `OCR_*` and `GAUNTLET_*`, the defaults above reflect the code and can be appended to `.env` directly.
+
+---
+
+## 11. Docker Deployment
 
 ```bash
-cd fire_agent_front
-npm install
-npm run dev          # http://localhost:5173
+# full stack (db + backend + frontend)
+docker compose up -d --build
+
+# with Langfuse (optional profile)
+docker compose --profile langfuse up -d --build
 ```
+
+- `db`: PostGIS image with a persistent volume.
+- `backend`: built from `Dockerfile`, depends on `db` health check, mounts `data/`.
+- `frontend`: built assets served by Nginx, `/api` reverse-proxied to backend.
+- Production must set `ENV=production` and a random `JWT_SECRET` in the same edit before restarting (otherwise the app refuses to boot or every session is invalidated), plus `ADMIN_INIT_PASSWORD`, database credentials and the `CORS_ORIGINS` allowlist; SSE requires unbuffered proxying.
 
 ---
 
-## 9. Data Import
-
-### Data Sources
-
-| Data | Source | Scale |
-|---|---|---|
-| Historical fire points | NASA FIRMS MODIS (Yunnan) | **5,411 records** (incl. FRP/confidence/day-night/brightness temperature) |
-| Predicted fire risk | GTWR model predictions | 2025—2026 daily + monthly, incl. fire_level 1-5 |
-| Administrative boundaries | Yunnan 16-prefecture GeoJSON | 16 MULTIPOLYGONs |
-
-### Import Scripts
-
-| Script | Function |
-|---|---|
-| `scripts/init_db.py` | Enable PostGIS extension + create all tables |
-| `scripts/import_fire_points.py` | Yunnan_fire.json → historical_fire_points (incl. geom construction) |
-| `scripts/import_predict_risks.py` | Daily/monthly JSON → predicted_fire_risks |
-| `scripts/import_region_boundaries.py` | Yunnan_border.json → region_boundaries (SRID=4326) |
-| `scripts/run_all_imports.py` | **One-click full import** (tables→boundaries→fire points→predictions, supports custom paths like `--fire-path`, with timing stats) |
-
-```bash
-# One-click full import
-python scripts/run_all_imports.py
-```
-
-> You can also restore the database directly from `sql/public.sql` (full DDL + data export) via Navicat / psql.
-
----
-
-## 10. Configuration (.env)
-
-Create a `.env` file in the project root:
-
-```env
-# Database (PostGIS must be enabled)
-DATABASE_URL=postgresql://postgres:password@localhost:5432/fire_agent
-
-# JWT signing secret (change in production)
-JWT_SECRET=your-strong-secret
-
-# AMap (weather API)
-AMAP_KEY=your-key
-
-# Active LLM provider: aliyun | amd | ollama
-ACTIVE_LLM_PROVIDER=aliyun
-
-# Alibaba Bailian (Chat + Embedding, OpenAI-compatible mode)
-LLM_API_KEY=sk-xxxxxxxx
-LLM_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
-LLM_MODEL=qwen-plus
-EMBEDDING_MODEL=text-embedding-v3
-
-# Vision / Speech models (ASR/TTS fixed to Bailian; vision switchable via VISION_PROVIDER)
-VISION_MODEL=qwen-vl-plus
-ASR_MODEL=qwen3-asr-flash
-TTS_MODEL=qwen3-tts-flash
-
-# AMD GPU Cloud (backup Chat provider)
-AMD_API_KEY=your-key
-AMD_API_BASE=https://developer.amd.com.cn/radeon/v1
-AMD_MODEL=DeepSeek-V4-Flash
-
-# Qwen3.8-Flash-Next availability window (YYYY-MM-DD HH:MM:SS, empty = unlimited)
-QWEN3_8_FLASH_START=
-QWEN3_8_FLASH_END=
-
-# Local Ollama (offline backup)
-OLLAMA_API_BASE=http://localhost:11434/v1
-OLLAMA_MODEL=qwen2.5:7b
-
-# RAG knowledge base
-KB_UPLOAD_DIR=data/knowledge_base
-KB_CHUNK_SIZE=500
-KB_CHUNK_OVERLAP=50
-KB_TOP_K=5
-
-# Rerank re-ranking (DashScope qwen3-rerank, uses LLM_API_KEY; auto-degrades to RRF fusion on failure)
-RERANK_ENABLED=true
-RERANK_MODEL=qwen3-rerank
-
-# Agent parameter: reports require manual approval (HITL) before finalization
-AGENT_REQUIRE_APPROVAL=true
-
-# P2 feature switches
-LLM_STREAM_ENABLED=true      # End-to-end streaming (reports / RAG answers pushed incrementally)
-PREFERENCES_ENABLED=true     # User preference long-term memory (PostgresStore)
-MCP_ENABLED=true             # MCP AMap weather read-only data source (skipped silently on failure)
-
-# Langfuse self-hosted observability (degrades to plain logging when disabled or no keys)
-LANGFUSE_ENABLED=false
-LANGFUSE_HOST=http://localhost:3000
-LANGFUSE_PUBLIC_KEY=
-LANGFUSE_SECRET_KEY=
-
-# Vision provider (vision switchable aliyun/amd; ASR/TTS always Bailian)
-VISION_PROVIDER=aliyun
-```
-
-**Configuration notes**:
-
-- **All LLM parameters are optional**: when LLM_API_KEY is empty the system auto-degrades (keyword parsing / template reports); non-AI features such as dashboard, maps, charts, and report management remain fully usable;
-- Model config can also be filled online instead of .env, in the frontend "System Admin → Model Access" page; **saving writes to .env and hot-reloads (no restart)**, with masked echo; you can also one-click switch any model type (Chat/vision/ASR/TTS/Embedding) through the Bailian free-quota catalog;
-- AMD model names must exactly match the available model names returned by AMD's `/models` endpoint (e.g. `DeepSeek-V4-Flash`), otherwise 404;
-- **Embedding / Speech models are always served by Alibaba Bailian** (using LLM_API_KEY), independent of ACTIVE_LLM_PROVIDER; the vision model defaults to Bailian and can be switched to AMD via VISION_PROVIDER;
-- **ASR/TTS requires the Bailian LLM_API_KEY**: speech recognition uses `chat/completions + input_audio`, speech synthesis uses the Bailian native multimodal endpoint; they are not compatible with other providers' compatible endpoints;
-- **P2 switches degrade safely**: RERANK_ENABLED / LLM_STREAM_ENABLED / PREFERENCES_ENABLED / MCP_ENABLED / LANGFUSE_ENABLED all auto-degrade when disabled or dependencies are missing, without affecting core features; Langfuse supports self-hosted deployment via `docker compose --profile observability`.
-
----
-
-## 11. FAQ
+## 12. FAQ
 
 | Problem | Solution |
-|---|---|
-| Startup database connection failure | Check that PostgreSQL is running, the DATABASE_URL password in `.env` is correct, and the `fire_agent` database has been created |
-| `CREATE EXTENSION postgis` error | Install the PostGIS extension package first (tick it in the Windows installer / Linux: `apt install postgresql-14-postgis-3`) |
-| AMD model connection 404 | Model name does not match the AMD `/models` endpoint; switch to an available model name `DeepSeek-V4-Flash` |
-| PDF extraction garbled | Custom-font-encoded PDFs go through the OCR fallback (PyMuPDF render + RapidOCR); make sure `rapidocr-onnxruntime` is installed |
-| OCR dependency install failure | `pip install rapidocr-onnxruntime` (downloads onnx models on first run, requires network) |
-| Smart query uses keywords instead of LLM | LLM_API_KEY not configured or the LLM call failed and auto-degraded; configure and test the connection in "System Admin → Model Access" |
-| Speech recognition reports "URL invalid" | ASR audio must be embedded in input_audio as a data URI (`data:audio/wav;base64,...`); raw base64 is not accepted by Bailian; frontend speech.js already encodes WAV this way |
-| Speech synthesis 404 / unsupported | Bailian's OpenAI-compatible mode has no /audio/speech endpoint; the system uses the native multimodal-generation endpoint instead; confirm TTS_MODEL is qwen3-tts-flash or cosyvoice-v2 |
-| Fire recognition returns "API Key not configured" | The vision model uses the Bailian LLM_API_KEY by default (or AMD_API_KEY after switching VISION_PROVIDER to amd); configure the corresponding key in "System Admin → Model Access" and retry (VISION_MODEL defaults to qwen-vl-plus) |
-| Frontend CORS error | In development the Vite proxy handles it; in production configure an `/api` reverse proxy in Nginx, or modify CORS_ORIGINS |
-| Changing .env has no effect | Editing the file directly requires a restart; use "System Admin → Model Access" to save (writes .env + in-memory, no restart) |
-| SSE progress not pushed / disconnects early | The reverse proxy must disable buffering for `/api` (`proxy_buffering off`) and relax read timeouts (see the 1800s config in the frontend repo's nginx.conf); EventSource passes the JWT via `?token=` |
-| MCP weather not taking effect | Make sure MCP_ENABLED=true and `mcp` / `langchain-mcp-adapters` are installed; when AMAP_KEY is missing or the call fails it is skipped silently without blocking report generation |
+| ------- | -------- |
+| `relation does not exist` on startup | Run `python scripts/init_db.py`; lifespan also runs `create_all` and patches columns |
+| PostGIS extension missing | `CREATE EXTENSION postgis;` then re-run migrations / `sql/public.sql` |
+| All LLM calls fail | Check `ACTIVE_LLM_PROVIDER` and the matching key; use `/admin/test/llm`; inspect breaker status |
+| Agent task stuck in running | A restart marks it failed via self-healing; a runtime orphan sweeper (45s grace, 30s interval) also fails tasks left by `--reload` restarts |
+| Approval does nothing | The task must be `awaiting_approval`; `edit` requires `content`, `reject` requires `comment`; gate-not-ready / duplicates return 409 + `detail.code` (`approval_not_ready` / `already_resumed` / `approval_busy` / `task_finished` / `checkpoint_unavailable` / `task_busy`) |
+| Review shows "未完成 · 转人工" | When the review LLM errors / fails to parse / gives no concrete issues, it degrades via `review_status=degraded`: no rewrite, the report goes straight to human approval |
+| No SSE progress | Disable `proxy_buffering` in Nginx, raise `proxy_read_timeout`; ensure the request carries `Authorization` (**do not put the token in the URL**); a reconnect first receives `report_snapshot` with what was already streamed |
+| Uploaded document yields no text | Check the four-layer extraction logs; scanned PDFs need `OCR_PROVIDER=amd` or local RapidOCR |
+| TTS returns 402 / arrears | Bailian arrears propagate code + message; switch `TTS_PROVIDER=amd` |
+| Empty report / review rejected | Review guards require ≥800 chars, required sections, real data; after 2 rounds it forces through |
+| CORS errors | Add the frontend origin to `CORS_ORIGINS` (defaults 5173 / 4173) |
 
 ---
 
-*Developer: wjl (19136220923@163.com) · Backend source: https://gitee.com/wjl2004/fire_agent_back · Frontend source: https://gitee.com/wjl2004/fire_agent_front*
+## 13. Version History
+
+### Security hardening and streaming reliability (post-v1.0.1 iteration)
+
+**Security hardening**
+
+- **Authorization sweep**: all 62 routes declare their auth policy explicitly, cross-checked against OpenAPI operations by `scripts/check_auth_coverage.py`; only `/`, `/health`, `/auth/login`, `/auth/register` and `/dashboard/summary` are anonymous (the last returns aggregates only).
+- **15-hour sliding session**: silent renewal via `X-Token-Refresh`; re-login is required only after 15 hours of inactivity. `users.token_version` revokes tokens on password change / deactivation.
+- **Secret self-check**: with `ENV=production` the app refuses to boot on an empty / under-32-byte / publicly known placeholder `JWT_SECRET`, and refuses a missing `ADMIN_INIT_PASSWORD`; `/docs` and `/redoc` are disabled in production.
+- **Upload triple validation** (size / extension / magic bytes); **log and error-message redaction** for API keys and tokens.
+
+**Streaming reliability**
+
+- The report channel keeps a per-task, per-round in-process copy of streamed text and sends it as the first `report_snapshot` frame on every new connection: switching pages or refreshing mid-stream no longer loses what was already displayed. The copy is dropped on terminal state and capped by task count and characters.
+
+### Post-v1.0.1 iterations (current code state)
+
+**LLM & capability expansion**
+
+- New **LongCat** provider: `LONGCAT_API_KEY` / `LONGCAT_API_BASE` / `LONGCAT_MODEL`; `llm_invoker` chain extended to four providers; admin static catalog + `/models` validation.
+- **AMD GPU Cloud four capability classes**: catalog crawl covers `text` / `vision` / `speech` / `ocr`, with free / limited-free / paid tiers.
+- New `TTS_PROVIDER` (Bailian failure auto-falls back to AMD OmniVoice `/audio/speech`), `OCR_PROVIDER` (AMD `MinerU2.5-Pro` → local RapidOCR).
+- TTS errors propagate arrears code + message.
+
+**Knowledge base**
+
+- `GET /rag/documents/{id}/content`: full text by concatenating chunks.
+- `GET /rag/documents/{id}/file`: original file via `FileResponse` + RFC 5987 filename, inline preview and download.
+- Document list now includes `file_type` / `chunk_count`.
+
+**Stability**
+
+- Startup self-healing: `running` tasks → `failed`, zombie `running` steps cleaned, `awaiting_approval` preserved.
+- Idempotent column patching extended to `agent_tasks.user_id`, `query_history.result`, `rag_history.result`, etc.
+
+**Quality & red teaming**
+
+- AgentGauntlet settings and injection wrappers (`_chaos_wrap` / `_guard_canary_output`).
+- Golden-set regression evaluation and real runtime state via `/agent/capabilities`.
+
+### v1.0.1
+
+- **Agent orchestration**: LangGraph 8 nodes, parallel fan-out/join, reflection retries, review loop, HITL `interrupt` / `resume`.
+- **Streaming**: task SSE node-level progress + `report_delta`; RAG `ask/stream`.
+- **LLM governance**: `llm_invoker` retry / breaker / provider-chain fallback / audit; AMD provider.
+- **RAG**: four-layer PDF extraction, hybrid retrieval, `qwen3-rerank`, Adaptive RAG, Q&A history.
+- **Enhancements**: PostgresStore preference memory, MCP AMap weather, Langfuse observability, golden-set evaluation.
+- **Operations**: Docker Compose full stack, startup column patching and seeding, CORS allowlist.
+
+### v1.0.0
+
+Initial release: dashboard data, smart query, knowledge-base RAG, basic agent orchestration, report center, admin, JWT auth, vision recognition.
+
+---
+
+*Developer: wjl (19136220923@163.com) · Backend: https://gitee.com/WJLGraph/fire_agent_back · Frontend: https://gitee.com/WJLGraph/Fire_agent_front*

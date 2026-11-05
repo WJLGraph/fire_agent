@@ -53,16 +53,16 @@ onMounted(() => {
   min-width: 200px;
   padding: 6px 10px;
   font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
-  color: var(--gis-text, #f8fafc);
-  background: var(--gis-bg-panel, #0f172a);
-  border: 1px solid var(--gis-border, #334155);
+  color: var(--fs-ink-900, var(--fs-ink-900));
+  background: var(--fs-bg-surface, var(--fs-ink-900));
+  border: 1px solid var(--fs-hairline, var(--fs-bg-sunken));
   border-radius: 2px;
 }
 
 .gis-clock-date {
   font-size: 10px;
   letter-spacing: 0.06em;
-  color: var(--gis-text-muted, #94a3b8);
+  color: var(--fs-ink-500, var(--fs-ink-500));
   margin-bottom: 4px;
 }
 
@@ -77,18 +77,18 @@ onMounted(() => {
   font-size: 18px;
   font-weight: 600;
   letter-spacing: 0.08em;
-  color: var(--gis-accent, #22d3ee);
+  color: var(--fs-accent, var(--fs-risk-1));
 }
 
 .gis-clock-dow {
   display: flex;
   gap: 4px;
   font-size: 10px;
-  color: var(--gis-text-muted, #64748b);
+  color: var(--fs-ink-500, var(--fs-ink-400));
 }
 
 .gis-clock-dow span.on {
-  color: var(--gis-text, #f8fafc);
+  color: var(--fs-ink-900, var(--fs-ink-900));
   font-weight: 700;
 }
 </style>

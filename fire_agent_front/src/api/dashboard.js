@@ -3,16 +3,14 @@
  * 通过 Vite proxy 将 /api 请求转发到后端 localhost:8000
  */
 import { API_V1 } from '@/utils/config'
+import { authFetch, withQuery } from '@/api/http'
 
 const API_BASE = `${API_V1}/dashboard`
 
+// 必须走 authFetch：/history-fires 与 /predict-risks 现在要求登录态（安全加固 2.2），
+// 早先这里是裸 fetch，不带 Authorization 头 → 后端 401 → 页面 catch → 一直显示本地降级数据
 async function request(url, params = {}) {
-  const qs = new URLSearchParams()
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') qs.append(k, v)
-  })
-  const fullUrl = `${API_BASE}${url}${qs.toString() ? '?' + qs.toString() : ''}`
-  const res = await fetch(fullUrl)
+  const res = await authFetch(withQuery(`${API_BASE}${url}`, params))
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)
   const json = await res.json()
   if (json.code !== 200) throw new Error(json.message || 'API error')
@@ -38,10 +36,9 @@ export function fetchPredictRisks(opts = {}) {
 }
 
 /**
- * 查询大屏摘要
- * @param {Object} opts - { start_date, end_date }
- * @returns {Promise<Object>}
+ * 大屏摘要统计（后端刻意保持匿名可访问；带 token 时照带，不影响结果）
+ * @returns {Promise<{ total_fire_points: number, high_risk_count: number, avg_frp: number, top_cities: Array }>}
  */
-export function fetchDashboardSummary(opts = {}) {
+export function fetchSummary(opts = {}) {
   return request('/summary', opts)
 }

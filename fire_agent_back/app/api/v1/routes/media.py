@@ -21,10 +21,20 @@ from app.core.llm import (
     get_vision_llm, transcribe_audio, synthesize_speech, vision_available,
 )
 from app.core.security import get_current_user
+from app.core.uploads import read_limited, sniff_magic
 from app.models.user import User
 from app.models.vision import VisionHistory
 
 router = APIRouter()
+
+
+def _bad(detail: str) -> dict:
+    """视觉/语音接口的失败口径：HTTP 200 + code 200 + data.ok=false。
+
+    前端（useVision / 录音条）按 `ok` 分支取 `detail` 展示，若改成 4xx 会走进
+    「网络错误」兜底、把可读原因丢掉，所以校验失败也沿用这一形状。
+    """
+    return {"code": 200, "message": "success", "data": {"ok": False, "detail": detail}}
 
 # 视觉识别图片保存目录
 VISION_UPLOAD_DIR = os.path.join("data", "vision_uploads")
@@ -64,13 +74,18 @@ async def analyze_image(
         return {"code": 200, "message": "success", "data": {
             "ok": False, "detail": f"未配置 API Key 或视觉模型（当前: {settings.VISION_MODEL or '未设置'}）",
         }}
-    # 读取并校验图片
-    content = await file.read()
-    if len(content) > 10 * 1024 * 1024:
-        return {"code": 200, "message": "success", "data": {"ok": False, "detail": "图片不能超过 10MB"}}
+    # 读取并校验图片（边读边限体积，避免整包先进内存）
+    try:
+        content = await read_limited(file, 10)
+    except HTTPException as e:
+        return _bad(str(e.detail))
     suffix = (file.filename or "").rsplit(".", 1)[-1].lower()
     if suffix not in ("jpg", "jpeg", "png", "webp", "bmp"):
-        return {"code": 200, "message": "success", "data": {"ok": False, "detail": "仅支持 jpg/png/webp/bmp 格式"}}
+        return _bad("仅支持 jpg/png/webp/bmp 格式")
+    # 伪装扩展名挡住：本接口会把内容 base64 后交给视觉模型，
+    # 一张改名为 .png 的任意二进制只会白烧一次模型调用
+    if not sniff_magic(f".{suffix}", content[:8192]):
+        return _bad(f"文件内容与 .{suffix} 类型不符")
     mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp", "bmp": "bmp"}[suffix]
 
     try:
@@ -196,9 +211,10 @@ async def asr_transcribe(
     模型: ASR_MODEL（qwen3-asr-flash / paraformer-v2）
     支持 wav / mp3 / opus / aac / amr 格式（前端已编码为 wav），限 20MB。
     """
-    content = await file.read()
-    if len(content) > 20 * 1024 * 1024:
-        return {"code": 200, "message": "success", "data": {"ok": False, "detail": "音频不能超过 20MB"}}
+    try:
+        content = await read_limited(file, 20)
+    except HTTPException as e:
+        return _bad(str(e.detail))
     try:
         text = transcribe_audio(content, file.filename or "audio.webm")
         return {"code": 200, "message": "success", "data": {

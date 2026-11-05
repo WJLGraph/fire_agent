@@ -43,6 +43,11 @@ def get_embedding() -> OpenAIEmbeddings | None:
         model=settings.EMBEDDING_MODEL,
         api_key=settings.LLM_API_KEY,
         base_url=settings.LLM_API_BASE or None,
+        timeout=45,
+        max_retries=1,
+        # DashScope 兼容端点只接受字符串输入；LangChain 默认会先 tiktoken 切词
+        # 再以 token 数组提交，会被百炼以 InvalidParameter 拒绝
+        check_embedding_ctx_length=False,
     )
 
 
@@ -64,6 +69,8 @@ def get_vision_llm(**kwargs) -> ChatOpenAI | None:
             base_url=settings.AMD_API_BASE or "https://developer.amd.com.cn/radeon/v1",
             temperature=kwargs.get("temperature", 0.1),
             max_tokens=kwargs.get("max_tokens", 2048),
+            timeout=45,
+            max_retries=1,
         )
     # 默认阿里百炼
     if not settings.LLM_API_KEY:
@@ -74,6 +81,8 @@ def get_vision_llm(**kwargs) -> ChatOpenAI | None:
         base_url=_bailian_base(),
         temperature=kwargs.get("temperature", 0.1),
         max_tokens=kwargs.get("max_tokens", 2048),
+        timeout=45,
+        max_retries=1,
     )
 
 
@@ -122,28 +131,123 @@ def synthesize_speech(text: str) -> bytes:
     """
     语音合成（TTS）：文本 → 音频字节（wav）
 
-    走百炼原生 /api/v1/services/aigc/multimodal-generation/generation 端点，
-    模型: TTS_MODEL（qwen3-tts-flash / qwen-tts 系列），返回 output.audio.url 再下载。
-    返回音频二进制；失败抛出异常。
+    按 TTS_PROVIDER 路由：
+    - amd:  AMD GPU Cloud OmniVoice（POST {AMD_API_BASE}/audio/speech {model, input}，
+            直接返回 wav 二进制；官方标注非商用），模型取 TTS_MODEL（如 OmniVoice）。
+    - aliyun: 主路百炼原生 /api/v1/services/aigc/multimodal-generation/generation，
+          模型 TTS_MODEL（qwen3-tts-flash），失败且配置了 AMD Key 时自动兜底 OmniVoice。
+    返回音频二进制；两路均失败抛出异常。
     """
-    if not settings.LLM_API_KEY:
-        raise RuntimeError("未配置 LLM_API_KEY，语音合成不可用")
-    # 原生端点：https://dashscope.aliyuncs.com/api/v1/...
-    native_base = "https://dashscope.aliyuncs.com/api/v1"
+    text = text[:500]
+    if settings.TTS_PROVIDER == "amd":
+        return _amd_tts(text)
+    # ---- aliyun 主路: 百炼 ----
+    if settings.LLM_API_KEY:
+        native_base = "https://dashscope.aliyuncs.com/api/v1"
+        try:
+            resp = httpx.post(
+                f"{native_base}/services/aigc/multimodal-generation/generation",
+                headers={"Authorization": f"Bearer {settings.LLM_API_KEY}"},
+                json={"model": settings.TTS_MODEL, "input": {"text": text, "voice": "Cherry"}},
+                timeout=120,
+            )
+            if resp.status_code != 200:
+                # 解析百炼错误体（Arrearage 欠费 / InvalidApiKey 等），透出真实原因而非裸 400
+                try:
+                    err = resp.json()
+                    raise RuntimeError(
+                        f"百炼 TTS 错误 {err.get('code', resp.status_code)}: {err.get('message', '')[:160]}"
+                    )
+                except ValueError:
+                    resp.raise_for_status()
+            audio = resp.json().get("output", {}).get("audio", {})
+            url = audio.get("url")
+            if not url:
+                raise RuntimeError("语音合成未返回音频 URL")
+            audio_resp = httpx.get(url, timeout=60)
+            audio_resp.raise_for_status()
+            return audio_resp.content
+        except Exception as primary_err:
+            # 主路失败 → 落到 AMD 兜底；AMD 也未配置时原样抛出
+            if not settings.AMD_API_KEY:
+                raise
+            primary_msg = str(primary_err)[:160]
+        else:
+            primary_msg = ""
+    else:
+        if not settings.AMD_API_KEY:
+            raise RuntimeError("未配置 LLM_API_KEY，语音合成不可用")
+        primary_msg = "未配置 LLM_API_KEY"
+
+    # ---- aliyun 兜底: AMD GPU Cloud OmniVoice ----
+    try:
+        return _amd_tts(text)
+    except Exception as amd_err:
+        raise RuntimeError(f"语音合成失败（百炼: {primary_msg}；AMD 兜底: {amd_err})") from amd_err
+
+
+def _amd_tts(text: str) -> bytes:
+    """AMD GPU Cloud OmniVoice TTS：POST {AMD_API_BASE}/audio/speech {model, input} → wav 二进制"""
+    if not settings.AMD_API_KEY:
+        raise RuntimeError("未配置 AMD_API_KEY，AMD 语音合成不可用")
     resp = httpx.post(
-        f"{native_base}/services/aigc/multimodal-generation/generation",
-        headers={"Authorization": f"Bearer {settings.LLM_API_KEY}"},
-        json={"model": settings.TTS_MODEL, "input": {"text": text[:500], "voice": "Cherry"}},
+        f"{settings.AMD_API_BASE.rstrip('/')}/audio/speech",
+        headers={"Authorization": f"Bearer {settings.AMD_API_KEY}"},
+        json={"model": settings.TTS_MODEL or "OmniVoice", "input": text},
         timeout=120,
     )
-    resp.raise_for_status()
-    audio = resp.json().get("output", {}).get("audio", {})
-    url = audio.get("url")
-    if not url:
-        raise RuntimeError("语音合成未返回音频 URL")
-    audio_resp = httpx.get(url, timeout=60)
-    audio_resp.raise_for_status()
-    return audio_resp.content
+    if resp.status_code != 200:
+        try:
+            err = resp.json()
+            msg = err.get("error", {}).get("message", "") if isinstance(err.get("error"), dict) else str(err)[:160]
+        except ValueError:
+            msg = resp.text[:160]
+        raise RuntimeError(f"AMD OmniVoice 错误 {resp.status_code}: {msg}")
+    return resp.content
+
+
+def amd_ocr_pdf(file_path, max_pages: int = 60) -> str:
+    """
+    AMD MinerU 文档识别：PDF 逐页渲染为 PNG → POST {AMD_API_BASE}/ocr → markdown 文本
+
+    请求体: {"model": OCR_MODEL, "document": {"type": "image_url", "image_url": "data:image/png;base64,..."}}
+    响应: {"pages": [{"index": 0, "markdown": "..."}]}
+    适用于 GB/T 标准 PDF（文字层乱码）与扫描件，识别质量优于本地 RapidOCR。
+    未配置 AMD Key 或全部失败时抛出异常（调用方自行降级本地 OCR）。
+    """
+    import base64
+
+    import pymupdf  # PyMuPDF
+
+    if not settings.AMD_API_KEY:
+        raise RuntimeError("未配置 AMD_API_KEY，AMD 文档识别不可用")
+    base = settings.AMD_API_BASE.rstrip("/")
+    headers = {"Authorization": f"Bearer {settings.AMD_API_KEY}"}
+    doc = pymupdf.open(str(file_path))
+    pages_text = []
+    try:
+        for i, page in enumerate(doc):
+            if i >= max_pages:
+                pages_text.append(f"[提示：文档超过 {max_pages} 页，仅识别前 {max_pages} 页]")
+                break
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2))  # 2x 渲染保证中文小字号可识别
+            b64 = base64.b64encode(pix.tobytes("png")).decode()
+            resp = httpx.post(
+                f"{base}/ocr",
+                headers=headers,
+                json={
+                    "model": settings.OCR_MODEL or "MinerU2.5-Pro",
+                    "document": {"type": "image_url", "image_url": f"data:image/png;base64,{b64}"},
+                },
+                timeout=180,
+            )
+            if resp.status_code != 200:
+                raise RuntimeError(f"AMD OCR 第 {i + 1} 页错误 {resp.status_code}: {resp.text[:120]}")
+            md_pages = resp.json().get("pages", [])
+            pages_text.append("\n".join(p.get("markdown", "") for p in md_pages))
+    finally:
+        doc.close()
+    return "\n".join(pages_text)
 
 
 def llm_available() -> bool:
@@ -215,13 +319,20 @@ def _get_aliyun_llm(**kwargs) -> ChatOpenAI | None:
         temperature=kwargs.get("temperature", 0.1),
         max_tokens=kwargs.get("max_tokens", 2048),
         extra_body=extra_body,
+        timeout=45,
+        max_retries=1,
     )
 
 
 # ===================== AMD GPU Cloud =====================
 
 def _get_amd_llm(**kwargs) -> ChatOpenAI | None:
-    """AMD GPU Cloud LLM 实例（含 Qwen3.8-Flash-Next 时间窗口校验）"""
+    """AMD GPU Cloud LLM 实例（含 Qwen3.8-Flash-Next 时间窗口校验）
+
+    enable_thinking=False 实测有效形式：extra_body={"chat_template_kwargs": {"enable_thinking": false}}
+    （AMD 端点为 vLLM 系；直接传 enable_thinking 会被忽略，思考 token 会吃满 max_tokens
+    导致正文为空/结构化输出失败）。enable_thinking=True 或缺省 → 保持端点默认（带思考）。
+    """
     if not settings.AMD_API_KEY:
         return None
     # 模型选择：优先使用 kwargs 参数，否则使用配置的默认模型
@@ -230,12 +341,22 @@ def _get_amd_llm(**kwargs) -> ChatOpenAI | None:
     if "qwen3.8-flash" in model.lower():
         if not is_qwen3_8_available():
             return None  # 不在可用窗口内，返回 None 触发降级
+    extra_body = None
+    if kwargs.get("enable_thinking") is False:
+        extra_body = {"chat_template_kwargs": {"enable_thinking": False}}
+    # reasoning_effort：限制思考长度（实测 low → 报告级生成 ~40s；缺省思考可达 100s+ 且正文迟迟不出）
+    effort = kwargs.get("reasoning_effort")
+    if effort:
+        extra_body = {**(extra_body or {}), "reasoning_effort": str(effort)}
     return ChatOpenAI(
         model=model,
         api_key=settings.AMD_API_KEY,
         base_url=settings.AMD_API_BASE or "https://developer.amd.com.cn/radeon/v1",
         temperature=kwargs.get("temperature", 0.1),
         max_tokens=kwargs.get("max_tokens", 2048),
+        extra_body=extra_body,
+        timeout=45,
+        max_retries=1,
     )
 
 
@@ -251,6 +372,8 @@ def _get_ollama_llm(**kwargs) -> ChatOpenAI | None:
         base_url=settings.OLLAMA_API_BASE,
         temperature=kwargs.get("temperature", 0.1),
         max_tokens=kwargs.get("max_tokens", 2048),
+        timeout=45,
+        max_retries=1,
     )
 
 
@@ -266,6 +389,8 @@ def _get_longcat_llm(**kwargs) -> ChatOpenAI | None:
         base_url=settings.LONGCAT_API_BASE or "https://api.longcat.chat/openai",
         temperature=kwargs.get("temperature", 0.1),
         max_tokens=kwargs.get("max_tokens", 2048),
+        timeout=45,
+        max_retries=1,
     )
 
 

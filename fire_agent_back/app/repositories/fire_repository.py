@@ -2,11 +2,12 @@
 火险数据访问层 — 历史火点 & 预测火险
 """
 from datetime import datetime
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from app.models.fire_point import HistoricalFirePoint
 from app.models.fire_risk import PredictedFireRisk
+from app.models.region import RegionBoundary
 from app.schemas.dashboard import HistoryFireQuery, PredictRiskQuery, DashboardSummary
 
 
@@ -51,6 +52,60 @@ class FireRepository:
                 }
                 for p in items
             ],
+        }
+
+    def count_history_by_city(self, query: HistoryFireQuery, limit: int = 5) -> dict:
+        """按城市统计历史火点数量（用于"火点最多的 N 个城市"类排名查询）"""
+        filters = []
+        if query.start_date:
+            filters.append(HistoricalFirePoint.acq_date >= query.start_date)
+        if query.end_date:
+            filters.append(HistoricalFirePoint.acq_date <= query.end_date)
+        if query.confidence:
+            filters.append(HistoricalFirePoint.conf == query.confidence)
+
+        total_filters = list(filters)
+        if query.city:
+            total_filters.append(HistoricalFirePoint.city == query.city)
+        total = self.db.query(HistoricalFirePoint).filter(*total_filters).count()
+
+        rows = (
+            self.db.query(HistoricalFirePoint.city, func.count().label("count"))
+            .filter(
+                *filters,
+                HistoricalFirePoint.city.isnot(None),
+                HistoricalFirePoint.city != "",
+                *([HistoricalFirePoint.city == query.city] if query.city else []),
+            )
+            .group_by(HistoricalFirePoint.city)
+            .order_by(func.count().desc())
+            .limit(limit)
+            .all()
+        )
+        if not rows:
+            # 原始火点数据的 city 字段为空（未回填）时，按坐标落入的州市边界统计
+            spatial_filters = list(filters)
+            if query.city:
+                spatial_filters.append(RegionBoundary.region_name == query.city)
+            rows = (
+                self.db.query(RegionBoundary.region_name, func.count().label("count"))
+                .select_from(HistoricalFirePoint)
+                .join(
+                    RegionBoundary,
+                    and_(
+                        RegionBoundary.region_level == "city",
+                        func.ST_Contains(RegionBoundary.geom, HistoricalFirePoint.geom),
+                    ),
+                )
+                .filter(*spatial_filters)
+                .group_by(RegionBoundary.region_name)
+                .order_by(func.count().desc())
+                .limit(limit)
+                .all()
+            )
+        return {
+            "total": total,
+            "items": [{"city": city, "count": count} for city, count in rows if city],
         }
 
     def query_predict_risks(self, query: PredictRiskQuery) -> dict:

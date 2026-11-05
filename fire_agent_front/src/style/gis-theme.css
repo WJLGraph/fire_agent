@@ -200,6 +200,53 @@
     --el-color-info-light-8: #eef2f8;
     --el-color-info-light-9: #f8fafc;
     --el-color-info-dark-2: #475569;
+
+    /* ==================== 阶段 5：语义色令牌（现状快照） ====================
+     * 来源：views/ 与 layout/ 中原本写死的 slate / sky 深色系色值。
+     * 取值原则：**与替换前的硬编码值逐一相等**，因此替换后浅色/深色表现完全不变（零回归）。
+     * 同时 RGB 三元组形式（*-rgb）用于带透明度的写法：rgba(var(--x-rgb), 0.08)。
+     * 注意：这些是当前视觉的"快照"，§10 视觉轨道重做时只需在此处统一改值，
+     *       无需再逐个页面文件替换。
+     */
+    /* —— 中性表面（深底体系） —— */
+    --gis-surface-1: #020617;   /* 页面最底背景 */
+    --gis-surface-2: #1e293b;   /* 面板 / 卡 containers */
+    --gis-surface-3: #334155;   /* 输入 / 次级卡片底 */
+    /* —— 文字层级（亮字体系，配深底） —— */
+    --gis-ink: #f8fafc;         /* 主文字 */
+    --gis-ink-muted: #94a3b8;   /* 次要文字 */
+    --gis-ink-subtle: #64748b;  /* 更次要 / 占位 */
+    --gis-ink-dim: #cbd5e1;     /* 弱化 / 禁用 */
+    --gis-ink-strong: #475569;  /* 深底上的次级文字 */
+    --gis-ink-deep: #0f172a;    /* 深色文字（亮底场景） */
+    /* —— 强调色（原 sky / cyan 系） —— */
+    --gis-brand: #0ea5e9;
+    --gis-brand-light: #38bdf8;
+    --gis-brand-lighter: #7dd3fc;
+    /* —— 火险五级（必须与 utils/riskLevel.js 的 RISK_COLORS 严格一致） ——
+     * 1青 2绿 3黄 4橙 5红。改动此处需同步 riskLevel.js，否则等级配色会错乱。
+     */
+    --gis-risk-1: #22d3ee;
+    --gis-risk-2: #4ade80;
+    --gis-risk-3: #facc15;
+    --gis-risk-4: #fb923c;
+    --gis-risk-5: #ef4444;
+    /* —— RGB 三元组（供 rgba() 带透明度复用） —— */
+    --gis-surface-1-rgb: 2, 6, 23;
+    --gis-surface-2-rgb: 30, 41, 59;
+    --gis-surface-3-rgb: 51, 65, 85;
+    --gis-ink-rgb: 248, 250, 252;
+    --gis-ink-muted-rgb: 148, 163, 184;
+    --gis-ink-subtle-rgb: 100, 116, 139;
+    --gis-ink-deep-rgb: 15, 23, 42;
+    --gis-brand-rgb: 14, 165, 233;
+    --gis-brand-light-rgb: 56, 189, 248;
+    --gis-risk-1-rgb: 34, 211, 238;
+    --gis-risk-2-rgb: 74, 222, 128;
+    --gis-risk-3-rgb: 250, 204, 21;
+    --gis-risk-4-rgb: 251, 146, 60;
+    --gis-risk-5-rgb: 239, 68, 68;
+    --gis-scrim-rgb: 0, 0, 0;   /* 遮罩 / 阴影 */
 }
 
 
@@ -318,6 +365,44 @@ html.dark {
     --el-color-info-light-8: rgba(148, 163, 184, 0.25);
     --el-color-info-light-9: rgba(148, 163, 184, 0.12);
     --el-color-info-dark-2: #64748b;
+
+    /* ==================== 阶段 5：语义色令牌（现状快照） ====================
+     * 深色下**暂与浅色取值完全一致** —— 因为 views/ 各页面的原硬编码色值本就是
+     * 一套固定的深色系配色（与主题无关）。保持同值 = 阶段 5 替换后表现零变化。
+     * §10 视觉轨道重做配色时，此处是唯一的改动点。
+     */
+    --gis-surface-1: #020617;
+    --gis-surface-2: #1e293b;
+    --gis-surface-3: #334155;
+    --gis-ink: #f8fafc;
+    --gis-ink-muted: #94a3b8;
+    --gis-ink-subtle: #64748b;
+    --gis-ink-dim: #cbd5e1;
+    --gis-ink-strong: #475569;
+    --gis-ink-deep: #0f172a;
+    --gis-brand: #0ea5e9;
+    --gis-brand-light: #38bdf8;
+    --gis-brand-lighter: #7dd3fc;
+    --gis-risk-1: #22d3ee;
+    --gis-risk-2: #4ade80;
+    --gis-risk-3: #facc15;
+    --gis-risk-4: #fb923c;
+    --gis-risk-5: #ef4444;
+    --gis-surface-1-rgb: 2, 6, 23;
+    --gis-surface-2-rgb: 30, 41, 59;
+    --gis-surface-3-rgb: 51, 65, 85;
+    --gis-ink-rgb: 248, 250, 252;
+    --gis-ink-muted-rgb: 148, 163, 184;
+    --gis-ink-subtle-rgb: 100, 116, 139;
+    --gis-ink-deep-rgb: 15, 23, 42;
+    --gis-brand-rgb: 14, 165, 233;
+    --gis-brand-light-rgb: 56, 189, 248;
+    --gis-risk-1-rgb: 34, 211, 238;
+    --gis-risk-2-rgb: 74, 222, 128;
+    --gis-risk-3-rgb: 250, 204, 21;
+    --gis-risk-4-rgb: 251, 146, 60;
+    --gis-risk-5-rgb: 239, 68, 68;
+    --gis-scrim-rgb: 0, 0, 0;
 }
 
 *,

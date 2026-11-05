@@ -3,36 +3,40 @@
  * 智能查询页 — 自然语言 → 结构化查询 → 结果展示（摘要/表格/图表/地图）
  *
  * 调用后端 API: POST /api/v1/query/execute
+ *
+ * 视觉 V2（visual-v0 smartquery 屏同构）：
+ *   - 页头改 v0 page-head（64px 单行：标题 + 副题 + 右侧状态徽标）
+ *   - 左栏（340px）：提问输入 + 示例胶囊 + 查询历史（hist-item 卡片常驻）
+ *   - 右主区（bg-canvas 居中列）：QueryAgent 解析卡 → 结果 KPI → 结果面板
+ *   - 空态改 v0 empty（虚线发丝框）
+ * 逻辑（查询状态机 / 历史回显 / 语音 ASR / 图表 option）未做任何修改。
  */
-import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue'
+import BackHomeButton from '@/components/base/BackHomeButton.vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
-import authFetch from '@/utils/authFetch'
-import { API_V1 } from '@/utils/config'
+import {
+  fetchHistory,
+  fetchHistoryDetail,
+  clearHistory as clearHistoryApi,
+  deleteHistoryItem as deleteHistoryItemApi,
+  execute,
+} from '@/api/query'
 import { chartTokens } from '@/utils/themeTokens'
 import { useThemeStore } from '@/stores/theme'
-
-// OpenLayers 地图
-import Map from 'ol/Map.js'
-import View from 'ol/View.js'
-import TileLayer from 'ol/layer/Tile.js'
-import { OSM } from 'ol/source.js'
-import VectorLayer from 'ol/layer/Vector.js'
-import VectorSource from 'ol/source/Vector.js'
-import GeoJSON from 'ol/format/GeoJSON.js'
-import { Point } from 'ol/geom.js'
-import Feature from 'ol/Feature.js'
-import { Style, Fill, Circle as CircleStyle, Text, Stroke } from 'ol/style.js'
-
-// 云南省州市行政边界 GeoJSON（16 个州市）
-import yunnanBorder from '@/assets/Yunnan_border.json'
+import { recordState, startRecord, cleanupSpeech } from '@/utils/speech'
+import QueryHistoryRail from './QueryHistoryRail.vue'
+import QueryInputPanel from './QueryInputPanel.vue'
+import QueryParsePanel from './QueryParsePanel.vue'
+import QueryResultPanel from './QueryResultPanel.vue'
 
 // ====== 状态 ======
 const queryText = ref('')
 const loading = ref(false)
 const activeTab = ref('summary')
 const queryHistory = ref([])
-const showHistory = ref(false)
+// 当前回显的历史条目（选中态高亮，与知识库问答历史同款）
+const activeHistoryId = ref(null)
 
 // 查询结果
 const currentResult = reactive({
@@ -46,56 +50,10 @@ const currentResult = reactive({
 })
 const parsedInfo = ref(null) // QueryAgent 解析结果（intent/params/method/explanation）
 
-// ====== QueryAgent 解析过程展示辅助 ======
-const INTENT_LABELS = {
-  history: '历史火点查询',
-  predict: '预测火险查询',
-  summary: '数据汇总统计',
-}
-const PARAM_LABELS = {
-  city: '城市', year: '年份', month: '月份', months: '季节月份',
-  confidence: '置信度', top_k: 'TopN', sort: '排序',
-}
-const intentLabel = (i) => INTENT_LABELS[i] || i || '未知'
-const formatParamValue = (k, v) => {
-  if (Array.isArray(v)) return `${v.join(',')}月`
-  if (k === 'sort') return v === 'desc' ? '降序' : '升序'
-  if (k === 'confidence') return ({ high: '高', nominal: '中', low: '低' })[v] || v
-  return v
-}
-const parsedParams = computed(() => {
-  const p = (parsedInfo.value && parsedInfo.value.params) || {}
-  return Object.entries(p).map(([k, v]) => ({
-    key: PARAM_LABELS[k] || k,
-    value: formatParamValue(k, v),
-  }))
-})
-
-// ECharts 实例
-let chartInstance = null
-const chartRef = ref(null)
-
-// OpenLayers 地图实例
-let mapInstance = null
-let mapVectorLayer = null
-const mapRef = ref(null)
-
-// 示例查询
-const exampleQueries = [
-  '2025年1月普洱市预测火险',
-  '2025年春季哪些州市风险最高',
-  '高置信度火点最多的5个州市',
-  '2025年火险数据汇总',
-]
-
-// ====== 后端 API 地址 ======
-const API_BASE = `${API_V1}/query`
-
 // ====== 查询历史（后端数据库持久化，按用户隔离） ======
 const loadHistory = async () => {
   try {
-    const res = await authFetch(`${API_BASE}/history`)
-    const json = await res.json()
+    const json = await fetchHistory()
     if (json.code === 200) {
       queryHistory.value = json.data || []
     }
@@ -113,6 +71,7 @@ const handleQuery = async () => {
   }
 
   loading.value = true
+  activeHistoryId.value = null // 新查询：历史高亮让位给当前结果
   currentResult.summary = ''
   currentResult.tableData = []
   currentResult.chartData = null
@@ -122,12 +81,7 @@ const handleQuery = async () => {
   parsedInfo.value = null
 
   try {
-    const res = await authFetch(`${API_BASE}/execute`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: text }),
-    })
-    const json = await res.json()
+    const json = await execute(text)
 
     if (json.code !== 200) {
       ElMessage.error('查询失败: ' + json.message)
@@ -150,13 +104,8 @@ const handleQuery = async () => {
     // 历史由后端自动保存（同文本去重），这里仅刷新列表
     loadHistory()
 
-    // 切换到摘要 tab
+    // 切换到摘要 tab（图表 tab 由用户主动点击时才会挂载 EChart 渲染）
     activeTab.value = 'summary'
-
-    // 如果后端返回了图表数据，延迟渲染图表
-    if (result.chart_data && result.chart_data.labels?.length > 0) {
-      nextTick(() => renderChart())
-    }
   } catch (e) {
     ElMessage.error('网络错误，请确认后端服务已启动: ' + e.message)
   } finally {
@@ -170,7 +119,6 @@ const handleExample = (example) => {
   handleQuery()
 }
 
-// ====== 点击历史记录 ======
 // ====== 点击历史：直接回显数据库存储的结果，不重新查询 ======
 const applyResult = (data) => {
   parsedInfo.value = data.parsed || null
@@ -183,16 +131,13 @@ const applyResult = (data) => {
   currentResult.parseMethod = (data.parsed && data.parsed.method) || 'keyword'
   currentResult.total = result.total || 0
   activeTab.value = 'summary'
-  if (result.chart_data && result.chart_data.labels?.length > 0) {
-    nextTick(() => renderChart())
-  }
 }
 
 const handleHistoryClick = async (item) => {
   queryText.value = item.text
+  activeHistoryId.value = item.id // 回显态：卡片 accent 环 + 竖轨（与知识库/Agent 中心一致）
   try {
-    const res = await authFetch(`${API_BASE}/history/${item.id}`)
-    const json = await res.json()
+    const json = await fetchHistoryDetail(item.id)
     if (json.code === 200 && json.data.result) {
       // 直接回显存储结果（不触发后端重新查询）
       parsedInfo.value = null
@@ -214,8 +159,7 @@ const handleHistoryClick = async (item) => {
 // ====== 清除历史 ======
 const clearHistory = async () => {
   try {
-    const res = await authFetch(`${API_BASE}/history`, { method: 'DELETE' })
-    const json = await res.json()
+    const json = await clearHistoryApi()
     if (json.code === 200) {
       queryHistory.value = []
     }
@@ -227,8 +171,7 @@ const clearHistory = async () => {
 // ====== 单条删除历史（与知识库/Agent/报告三页保持一致） ======
 const deleteHistoryItem = async (item) => {
   try {
-    const res = await authFetch(`${API_BASE}/history/${item.id}`, { method: 'DELETE' })
-    const json = await res.json()
+    const json = await deleteHistoryItemApi(item.id)
     if (json.code === 200) {
       queryHistory.value = queryHistory.value.filter(h => h.id !== item.id)
     }
@@ -237,113 +180,45 @@ const deleteHistoryItem = async (item) => {
   }
 }
 
-// ====== 地图渲染（OpenLayers） ======
-const renderMap = () => {
-  if (!mapRef.value) return
-  const features = (currentResult.geoData && currentResult.geoData.features) || []
-  if (!features.length) return // 无点位时由模板展示提示文案
-
-  // 首次初始化底图
-  if (!mapInstance) {
-    // 云南省州市行政边界图层（描边 + 半透明填充 + 州市名标注）
-    const borderLayer = new VectorLayer({
-      source: new VectorSource({
-        features: new GeoJSON().readFeatures(yunnanBorder, {
-          dataProjection: 'EPSG:4326',
-          featureProjection: 'EPSG:4326',
-        }),
-      }),
-      style: (feature) => new Style({
-        stroke: new Stroke({ color: '#22d3ee', width: 1.5 }),
-        fill: new Fill({ color: 'rgba(34, 211, 238, 0.05)' }),
-        text: new Text({
-          text: feature.get('name') || '',
-          font: '11px sans-serif',
-          fill: new Fill({ color: 'rgba(148, 163, 184, 0.9)' }),
-          stroke: new Stroke({ color: '#000000', width: 3 }),
-        }),
-      }),
-    })
-
-    mapInstance = new Map({
-      target: mapRef.value,
-      layers: [
-        new TileLayer({
-          source: new OSM(),
-          opacity: 0.85,
-        }),
-        borderLayer,
-      ],
-      view: new View({
-        center: [99.5, 24.5],
-        zoom: 5,
-        projection: 'EPSG:4326',
-      }),
-    })
+// ====== 语音输入（ASR）：识别完成自动执行查询 ======
+const handleMicClick = () => {
+  if (recordState.recording) {
+    startRecord() // 录音中再次调用 = 停止并识别
+    return
   }
-
-  // 清除旧图层
-  if (mapVectorLayer) mapInstance.removeLayer(mapVectorLayer)
-
-  // 构建点位 Feature
-  const olFeatures = currentResult.geoData.features
-    .filter(f => f.geometry && f.geometry.coordinates)
-    .map(f => {
-      const [lng, lat] = f.geometry.coordinates
-      const feat = new Feature({ geometry: new Point([lng, lat]) })
-      const props = f.properties || {}
-      feat.setProperties(props)
-      return feat
-    })
-
-  mapVectorLayer = new VectorLayer({
-    source: new VectorSource({ features: olFeatures }),
-    style: (feature) => {
-      const color = feature.get('color') || '#0ea5e9'
-      const name = feature.get('name') || ''
-      return new Style({
-        image: new CircleStyle({
-          radius: 7,
-          fill: new Fill({ color }),
-          stroke: new Stroke({ color: '#ffffff', width: 1.5 }),
-        }),
-        text: new Text({
-          text: name,
-          font: '11px sans-serif',
-          fill: new Fill({ color: '#ffffff' }),
-          stroke: new Stroke({ color: '#000000', width: 3 }),
-          offsetY: -14,
-        }),
-      })
-    },
+  startRecord((text) => {
+    queryText.value = text
+    handleQuery()
   })
-  mapInstance.addLayer(mapVectorLayer)
-
-  // 自适应视图到点位范围
-  if (olFeatures.length > 0) {
-    const extent = mapVectorLayer.getSource().getExtent()
-    mapInstance.getView().fit(extent, { padding: [40, 40, 40, 40], maxZoom: 10, duration: 300 })
-  } else {
-    mapInstance.getView().setCenter([99.5, 24.5])
-    mapInstance.getView().setZoom(5)
-  }
-  mapInstance.updateSize()
 }
 
-// ====== 图表渲染 ======
+// ====== 结果 KPI（v0 sq-kpis 四格：记录总数 / 解析方式 / 可用视图 / 历史查询） ======
+const resultKpis = computed(() => {
+  const dims = [
+    currentResult.tableData.length > 0 && '表格',
+    currentResult.chartData && currentResult.chartData.labels && '图表',
+    currentResult.geoData && '地图',
+  ].filter(Boolean)
+  return [
+    { v: (currentResult.total || 0).toLocaleString(), k: '记录总数' },
+    { v: currentResult.parseMethod === 'llm' ? 'LLM 解析' : (currentResult.parseMethod ? '关键词' : '—'), k: '解析方式' },
+    { v: dims.length ? dims.join(' / ') : '—', k: '可用视图' },
+    { v: String(queryHistory.value.length), k: '历史查询' },
+  ]
+})
+
+// ====== 图表 option ======
+// 阶段 3：图表实例交给 components/chart/EChart 管理（init / dispose / resize / 主题重建），
+//         这里只负责产出 option —— 原 renderChart 内的配置逻辑一字未改，仅由函数改为 computed。
 const theme = useThemeStore()
+const tokens = computed(() => chartTokens(theme.mode))
 
-const renderChart = () => {
-  if (!chartRef.value) return
-  if (chartInstance) chartInstance.dispose()
-
-  chartInstance = echarts.init(chartRef.value, undefined, { renderer: 'canvas' })
-
-  if (!currentResult.chartData || !currentResult.chartData.labels) return
+const chartOption = computed(() => {
+  if (!currentResult.chartData || !currentResult.chartData.labels) return {}
 
   const labels = currentResult.chartData.labels
   const values = currentResult.chartData.values
-  const t = chartTokens() // 主题取色：文字/坐标轴/浮层跟随浅色/深色主题
+  const t = tokens.value // 主题取色：文字/坐标轴/浮层跟随浅色/深色主题
 
   let option = {}
 
@@ -411,280 +286,90 @@ const renderChart = () => {
     }
   }
 
-  chartInstance.setOption(option)
-  chartInstance.resize()
-}
-
-// 主题切换时重建图表（重取 CSS 变量配色）
-watch(() => theme.mode, () => {
-  if (currentResult.chartData && currentResult.chartData.labels?.length) {
-    nextTick(() => renderChart())
-  }
+  return option
 })
 
-// ====== 键盘快捷键 ======
-const handleKeydown = (e) => {
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-    handleQuery()
-  }
-}
-
-// ====== 语音输入（ASR）与语音播报（TTS）— 统一工具 ======
-import { speakState, speakText, recordState, startRecord, cleanupSpeech } from '@/utils/speech'
-
-const handleMicClick = () => {
-  if (recordState.recording) {
-    startRecord() // 录音中再次调用 = 停止并识别
-    return
-  }
-  startRecord((text) => {
-    queryText.value = text
-    handleQuery() // 识别完成自动执行查询
-  })
-}
-
-// ====== 窗口自适应 ======
-import { onUnmounted } from 'vue'
-const handleResize = () => {
-  if (chartInstance) chartInstance.resize()
-  if (mapInstance) setTimeout(() => mapInstance.updateSize(), 100)
-}
 onMounted(() => {
-  window.addEventListener('resize', handleResize)
   loadHistory()
 })
 onUnmounted(() => {
-  window.removeEventListener('resize', handleResize)
-  if (chartInstance) chartInstance.dispose()
-  if (mapInstance) { mapInstance.setTarget(undefined); mapInstance = null }
   cleanupSpeech() // 停止语音播报/录音
 })
 </script>
 
 <template>
-  <div class="query-shell">
-    <!-- 页头卡（sc-datav TitleWrapper 同构：强调竖条 + 标题 + 英文角标） -->
-    <header class="query-header">
-      <div class="query-header-left">
-        <h1 class="query-title">智能查询</h1>
-        <p class="query-subtitle">QueryAgent 解析自然语言 → DataAgent 执行查询 → 四维展示结果</p>
-        <p class="datav-en">Smart Query · NL2Data</p>
+  <div class="sq-page">
+    <!-- ===== 页头（v0 page-head 同构：64px 单行） ===== -->
+    <header class="sq-head">
+      <div class="sq-head__t">
+        <h1 class="sq-head__h1">智能查询</h1>
+        <p class="sq-head__sub">自然语言提问 · QueryAgent 解析 → 摘要 / 表格 / 图表 / 地图</p>
       </div>
+      <BackHomeButton />
+      <span class="sq-head__sp"></span>
+      <span class="sq-head__badge mono">qwen-plus · LLM / keyword 双通道</span>
+      <span class="sq-head__live"><i class="sq-head__dot"></i>QueryAgent 就绪</span>
     </header>
 
-    <div class="query-body">
-      <!-- 左侧：查询历史 -->
-      <aside class="query-history" :class="{ expanded: showHistory }">
-        <div class="history-header" @click="showHistory = !showHistory">
-          <span class="history-label">查询历史</span>
-          <span class="history-en">History</span>
-          <span class="history-count">{{ queryHistory.length }}</span>
-        </div>
-        <div v-if="showHistory" class="history-list">
-          <div
-            v-for="(item, i) in queryHistory"
-            :key="i"
-            class="history-item"
-            @click="handleHistoryClick(item)"
-          >
-            <button
-              class="history-delete"
-              title="删除"
-              @click.stop="deleteHistoryItem(item)"
-            >×</button>
-            <div class="history-text">{{ item.text }}</div>
-            <div class="history-meta">
-              <span class="history-time">{{ item.time }}</span>
-              <span class="history-method" :class="item.method">
-                {{ item.method === 'llm' ? 'LLM' : '关键词' }}
-              </span>
-            </div>
-          </div>
-          <div v-if="queryHistory.length === 0" class="history-empty">
-            暂无查询记录
-          </div>
-          <div v-if="queryHistory.length > 0" class="history-clear" @click.stop="clearHistory">
-            清除历史
-          </div>
+    <!-- ===== 主体：左栏（提问 + 历史）/ 右主区（解析 + KPI + 结果） ===== -->
+    <div class="sq-body">
+      <!-- 左栏 -->
+      <aside class="sq-side">
+        <div class="sq-side__scroll">
+          <!-- 输入区（提问 + 示例胶囊） -->
+          <QueryInputPanel
+            v-model="queryText"
+            :loading="loading"
+            :recording="recordState.recording"
+            @query="handleQuery"
+            @mic="handleMicClick"
+            @example="handleExample"
+          />
+
+          <!-- 查询历史（hist-item 卡片常驻列表） -->
+          <QueryHistoryRail
+            :items="queryHistory"
+            :active-id="activeHistoryId"
+            @select="handleHistoryClick"
+            @remove="deleteHistoryItem"
+            @clear="clearHistory"
+          />
         </div>
       </aside>
 
-      <!-- 主内容 -->
-      <div class="query-main">
-        <!-- 输入区 -->
-        <div class="input-area">
-          <div class="input-row">
-            <el-input
-              v-model="queryText"
-              type="textarea"
-              :rows="2"
-              placeholder="输入自然语言查询，例如：2025年1月普洱市预测火险"
-              class="query-input"
-              @keydown="handleKeydown"
-            />
-            <el-button
-              type="primary"
-              :loading="loading"
-              @click="handleQuery"
-              class="query-btn"
-            >
-              查询
-            </el-button>
-            <el-button
-              :type="recordState.recording ? 'danger' : 'default'"
-              :title="recordState.recording ? '停止录音并识别' : '语音输入'"
-              class="mic-btn"
-              @click="handleMicClick"
-            >
-              {{ recordState.recording ? '■ 停止' : '🎤' }}
-            </el-button>
-          </div>
-          <div class="example-row">
-            <span class="example-label">示例：</span>
-            <span
-              v-for="(ex, i) in exampleQueries"
-              :key="i"
-              class="example-tag"
-              @click="handleExample(ex)"
-            >
-              {{ ex }}
-            </span>
-          </div>
-          <div class="keyboard-hint">Ctrl+Enter 快速查询</div>
-        </div>
+      <!-- 右主区 -->
+      <div class="sq-main">
+        <div class="sq-main__scroll">
+          <!-- QueryAgent 解析过程 -->
+          <QueryParsePanel v-if="parsedInfo" :parsed-info="parsedInfo" />
 
-        <!-- QueryAgent 解析过程 -->
-        <div v-if="parsedInfo" class="agent-parse">
-          <div class="agent-parse-head">
-            <span class="ap-agent-badge">QueryAgent</span>
-            <span class="ap-title">解析过程</span>
-            <span class="ap-method" :class="parsedInfo.method">
-              {{ parsedInfo.method === 'llm' ? 'LLM 解析' : '关键词解析' }}
-            </span>
-          </div>
-          <div class="agent-parse-body">
-            <div class="ap-row">
-              <span class="ap-label">意图</span>
-              <span class="ap-value intent">{{ intentLabel(parsedInfo.intent) }}</span>
-            </div>
-            <div v-if="parsedParams.length" class="ap-row">
-              <span class="ap-label">参数</span>
-              <div class="ap-chips">
-                <span v-for="(param, i) in parsedParams" :key="i" class="ap-chip">
-                  <em>{{ param.key }}</em>{{ param.value }}
-                </span>
-              </div>
-            </div>
-            <div v-if="parsedInfo.explanation" class="ap-row">
-              <span class="ap-label">说明</span>
-              <span class="ap-value">{{ parsedInfo.explanation }}</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 结果区 -->
-        <div v-if="currentResult.summary" class="result-area">
-          <!-- 摘要卡片 -->
-          <div class="summary-card">
-            <div class="summary-icon">i</div>
-            <div class="summary-content">
-              <div class="summary-text">{{ currentResult.summary }}</div>
-              <div class="summary-meta">共 {{ currentResult.total }} 条记录</div>
-            </div>
-            <div class="summary-actions">
-              <el-button
-                size="small"
-                :loading="speakState.loading"
-                :type="speakState.speaking || speakState.loading ? 'danger' : 'default'"
-                plain
-                title="语音播报查询摘要"
-                @click="speakText(`${currentResult.summary}，共${currentResult.total}条记录。`)"
-              >{{ speakState.speaking || speakState.loading ? '停止' : '🔊 播报' }}</el-button>
+          <!-- 结果 KPI（v0 sq-kpis 四格） -->
+          <div v-if="currentResult.summary" class="sq-kpis">
+            <div v-for="k in resultKpis" :key="k.k" class="sq-kpi">
+              <span class="sq-kpi__v">{{ k.v }}</span>
+              <span class="sq-kpi__k">{{ k.k }}</span>
             </div>
           </div>
 
-          <!-- Tab 切换 -->
-          <div class="result-tabs">
-            <button
-              class="tab-btn"
-              :class="{ active: activeTab === 'summary' }"
-              @click="activeTab = 'summary'"
-            >摘要</button>
-            <button
-              class="tab-btn"
-              :class="{ active: activeTab === 'table' }"
-              @click="activeTab = 'table'"
-              :disabled="currentResult.tableData.length === 0"
-            >表格 ({{ currentResult.tableData.length }})</button>
-            <button
-              class="tab-btn"
-              :class="{ active: activeTab === 'chart' }"
-              @click="activeTab = 'chart'; nextTick(() => renderChart())"
-              :disabled="!currentResult.chartData || !currentResult.chartData.labels"
-            >图表</button>
-            <button
-              class="tab-btn"
-              :class="{ active: activeTab === 'map' }"
-              @click="activeTab = 'map'; nextTick(() => renderMap())"
-              :disabled="!currentResult.geoData"
-            >地图</button>
-            <span v-if="currentResult.parseMethod" class="method-badge" :class="currentResult.parseMethod">
-              {{ currentResult.parseMethod === 'llm' ? 'LLM 解析' : '关键词解析' }}
-            </span>
-          </div>
+          <!-- 结果区 -->
+          <QueryResultPanel
+            v-if="currentResult.summary"
+            v-model:active-tab="activeTab"
+            :result="currentResult"
+            :chart-option="chartOption"
+          />
 
-          <!-- 摘要内容 -->
-          <div v-if="activeTab === 'summary'" class="tab-content tab-summary">
-            <div class="summary-full">{{ currentResult.summary }}</div>
+          <!-- 空态（v0 empty：虚线发丝框） -->
+          <div v-else class="sq-empty">
+            <svg class="sq-empty__ic" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+              <circle cx="9" cy="9" r="5.5"/><path d="m13.2 13.2 3.3 3.3"/>
+            </svg>
+            输入查询内容，系统将自动分析数据并展示结果
+            <span class="sq-empty__hint">支持自然语言：州市 / 时间窗口 / 置信度 / TopN 均可自由组合</span>
+            <button class="sq-empty__btn" @click="handleMicClick">
+              {{ recordState.recording ? '停止录音' : '试试语音提问' }}
+            </button>
           </div>
-
-          <!-- 表格内容 -->
-          <div v-if="activeTab === 'table'" class="tab-content tab-fill">
-            <div class="table-wrap">
-              <el-table
-                :data="currentResult.tableData"
-                stripe
-                height="100%"
-                size="small"
-                class="result-table"
-              >
-                <el-table-column
-                  v-for="col in Object.keys(currentResult.tableData[0] || {})"
-                  :key="col"
-                  :prop="col"
-                  :label="col"
-                  min-width="80"
-                  show-overflow-tooltip
-                />
-              </el-table>
-            </div>
-          </div>
-
-          <!-- 图表内容 -->
-          <div v-if="activeTab === 'chart'" class="tab-content tab-fill">
-            <div
-              ref="chartRef"
-              class="chart-container"
-            />
-          </div>
-
-          <!-- 地图内容 -->
-          <div v-if="activeTab === 'map'" class="tab-content tab-fill">
-            <div
-              v-if="currentResult.geoData && currentResult.geoData.features && currentResult.geoData.features.length"
-              ref="mapRef"
-              class="map-container"
-            />
-            <div v-else class="map-empty">
-              该查询结果未包含地理坐标信息，暂无法展示地图点位
-            </div>
-          </div>
-        </div>
-
-        <!-- 空状态 -->
-        <div v-else class="empty-state">
-          <div class="empty-icon">⌕</div>
-          <p class="empty-text">输入查询内容，系统将自动分析数据并展示结果</p>
         </div>
       </div>
     </div>
@@ -692,732 +377,233 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.query-shell {
-  position: relative;
+.sq-page {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 20px 24px;
-  background: var(--gis-atmo-bg);
-  color: var(--gis-text, #f8fafc);
+  background: var(--fs-bg-canvas);
+  /* 指挥台网格底纹（hairline 级，随亮暗主题取色） */
+  background-image:
+    linear-gradient(rgba(var(--fs-ink-900-rgb), 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--fs-ink-900-rgb), 0.025) 1px, transparent 1px);
+  background-size: 48px 48px;
+  color: var(--fs-ink-900);
   overflow: hidden;
 }
 
-/* 页头卡（sc-datav TitleWrapper 同构：玻璃底 + 强调竖条 + 英文角标） */
-.query-header {
+/* ===== 页头（v0 page-head） ===== */
+.sq-head {
   flex-shrink: 0;
-  margin-bottom: 16px;
+  height: var(--fs-topbar-h, 64px);
+  padding: 0 24px;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 20px;
-  background: var(--gis-glass);
-  backdrop-filter: blur(var(--gis-glass-blur)) saturate(var(--gis-glass-saturate));
-  border: 1px solid var(--gis-glass-border);
-  box-shadow: inset 0 1px 0 var(--gis-glass-highlight);
-  border-radius: var(--gis-radius-md, 10px);
+  background: var(--fs-bg-surface);
+  border-bottom: 1px solid var(--fs-hairline);
+}
+.sq-head__t { min-width: 0; }
+.sq-head__h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  color: var(--fs-ink-900);
+}
+.sq-head__sub {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--fs-ink-500);
+}
+.sq-head__sp { flex: 1; }
+.sq-head__badge {
+  font-family: var(--fs-font-mono);
+  font-size: 11px;
+  color: var(--fs-ink-500);
+  white-space: nowrap;
+}
+.sq-head__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--fs-r-xs, 3px);
+  background: var(--fs-bg-sunken);
+  font-size: 11px;
+  color: var(--fs-ink-700);
+  white-space: nowrap;
+}
+.sq-head__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--fs-success);
 }
 
-.query-header::before {
-  content: '';
-  width: 3px;
-  height: 26px;
-  border-radius: 2px;
-  background: var(--gis-accent, #0ea5e9);
+/* ===== 主体 ===== */
+.sq-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.sq-side {
+  flex: none;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--fs-bg-surface);
+  border-right: 1px solid var(--fs-hairline);
+  overflow: hidden;
+}
+.sq-side__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden; /* 整列不滚动：输入区定高，历史区弹性 + 内部铺满，翻页器常显沉底 */
+  /* 顶部 24px 与页头留出呼吸、左右 16px 与知识库/Agent 中心左列对齐；底部回收 6px 让给历史区 */
+  padding: 24px 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sq-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--fs-bg-canvas);
+}
+.sq-main__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 20px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--fs-hairline-strong) transparent;
+}
+
+/* ===== 结果 KPI（v0 sq-kpis 四格） ===== */
+.sq-kpis {
   flex-shrink: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  background: var(--fs-bg-surface);
+  border-radius: var(--fs-r-md, 10px);
+  box-shadow: inset 0 0 0 1px var(--fs-hairline);
+  overflow: hidden;
 }
-
-.query-header-left {
+.sq-kpi {
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  border-left: 1px solid var(--fs-hairline);
+  min-width: 0;
 }
-
-.query-title {
-  margin: 0;
+.sq-kpi:first-child { border-left: none; }
+.sq-kpi__v {
+  font-family: var(--fs-font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: 20px;
   font-weight: 600;
-  color: var(--gis-text, #f8fafc);
-  letter-spacing: 0.02em;
-}
-
-.query-subtitle {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--gis-text-muted, #94a3b8);
-}
-
-.query-body {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  gap: 16px;
-}
-
-/* ====== 左侧历史 ====== */
-.query-history {
-  flex-shrink: 0;
-  width: 48px;
-  background: var(--gis-glass);
-  backdrop-filter: blur(var(--gis-glass-blur)) saturate(var(--gis-glass-saturate));
-  border: 1px solid var(--gis-glass-border);
-  box-shadow: inset 0 1px 0 var(--gis-glass-highlight);
-  border-radius: var(--gis-radius-md, 10px);
-  transition: width 0.2s ease;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.query-history.expanded {
-  width: 220px;
-}
-
-.history-header {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 12px 8px;
-  cursor: pointer;
-  border-bottom: 1px solid var(--gis-border, #334155);
-  user-select: none;
-  flex-shrink: 0;
-}
-
-.history-header::before {
-  content: '';
-  width: 3px;
-  height: 12px;
-  border-radius: 2px;
-  background: var(--gis-accent, #0ea5e9);
-  flex-shrink: 0;
-}
-
-/* 英文角标：展开后才显示（与知识库 docs-en 同构） */
-.history-en {
-  display: none;
-  margin-left: auto;
-  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
-  font-size: 8px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--gis-text-muted, #94a3b8);
-}
-
-.expanded .history-en {
-  display: inline;
-}
-
-.history-label {
-  display: none;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--gis-text, #f8fafc);
-  letter-spacing: 0.04em;
-}
-
-.expanded .history-label {
-  display: inline;
-}
-
-.history-count {
-  font-size: 10px;
-  padding: 1px 6px;
-  background: var(--gis-accent, #0ea5e9);
-  color: var(--gis-on-accent, #020617);
-  border-radius: 8px;
-  font-weight: 700;
-}
-
-.history-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-  display: none;
-}
-
-.expanded .history-list {
-  display: block;
-}
-
-.history-item {
-  position: relative;
-  padding: 6px 8px;
-  cursor: pointer;
-  border-radius: 2px;
-  margin-bottom: 4px;
-  transition: background 0.15s;
-}
-
-.history-item:hover {
-  background: var(--gis-hover-tint, rgba(34, 211, 238, 0.08));
-}
-
-.history-delete {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  display: none;
-  width: 16px;
-  height: 16px;
-  line-height: 14px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--gis-text-muted, #64748b);
-  background: var(--gis-mask, rgba(2, 6, 23, 0.7));
-  border: 1px solid var(--gis-border, #334155);
-  border-radius: 2px;
-  cursor: pointer;
-  padding: 0;
-}
-
-.history-item:hover .history-delete {
-  display: block;
-}
-
-.history-delete:hover {
-  color: #f87171;
-  border-color: #f87171;
-}
-
-.history-text {
-  font-size: 11px;
-  color: var(--gis-text, #f8fafc);
-  line-height: 1.4;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--fs-ink-900);
   overflow: hidden;
   text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
 }
-
-.history-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 4px;
-}
-
-.history-time {
-  font-size: 9px;
-  color: var(--gis-text-muted, #64748b);
-}
-
-.history-method {
-  font-size: 9px;
-  padding: 0 5px;
-  border-radius: 8px;
-  font-weight: 600;
-}
-.history-method.llm {
-  color: #4ade80;
-  background: rgba(74, 222, 128, 0.12);
-}
-.history-method.keyword {
-  color: #94a3b8;
-  background: rgba(148, 163, 184, 0.12);
-}
-
-.history-empty {
-  padding: 20px 8px;
-  text-align: center;
-  font-size: 11px;
-  color: var(--gis-text-muted, #64748b);
-}
-
-.history-clear {
-  padding: 8px;
-  text-align: center;
+.sq-kpi__k {
   font-size: 10px;
-  color: var(--gis-accent, #0ea5e9);
-  cursor: pointer;
-  border-top: 1px solid var(--gis-border, #334155);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--fs-ink-500);
 }
 
-/* ====== 主内容 ====== */
-.query-main {
+/* ===== 空态（v0 empty：虚线发丝框） ===== */
+.sq-empty {
   flex: 1;
+  min-height: 320px;
   display: flex;
   flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  gap: 12px;
-  overflow-y: auto; /* 外层滚动：整列内容超高时往下滚，左侧历史保持不动（与 Agent 中心一致） */
-}
-
-/* 输入区 */
-.input-area {
-  flex-shrink: 0;
-  background: var(--gis-glass);
-  backdrop-filter: blur(var(--gis-glass-blur)) saturate(var(--gis-glass-saturate));
-  border: 1px solid var(--gis-glass-border);
-  box-shadow: inset 0 1px 0 var(--gis-glass-highlight);
-  border-radius: var(--gis-radius-md, 10px);
-  padding: 14px 16px;
-}
-
-.input-row {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
-
-.query-input {
-  flex: 1;
-}
-
-.query-input :deep(.el-textarea__inner) {
-  background: var(--gis-bg-deep, #020617) !important;
-  color: var(--gis-text, #f8fafc) !important;
-  border: 1px solid var(--gis-border, #334155) !important;
-  border-radius: 3px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 16px;
+  border: 1px dashed var(--fs-hairline-strong);
+  border-radius: var(--fs-r-md, 10px);
+  color: var(--fs-ink-500);
   font-size: 13px;
-  line-height: 1.6;
-  resize: vertical;
+  text-align: center;
 }
-
-.query-input :deep(.el-textarea__inner:focus) {
-  border-color: var(--gis-accent, #0ea5e9) !important;
-  box-shadow: 0 0 0 2px var(--gis-accent-soft, rgba(34, 211, 238, 0.15)) !important;
-}
-
-.query-btn {
-  flex-shrink: 0;
-  height: 74px;
-  min-width: 80px;
-  background: var(--gis-metal-accent) !important;
-  border: none !important;
-  color: var(--gis-on-accent, #020617) !important;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  transition: filter 0.15s, box-shadow 0.15s;
-}
-
-.query-btn:hover {
-  filter: brightness(1.1) !important;
-  box-shadow: var(--gis-glow-strong) !important;
-}
-
-/* 语音输入按钮 */
-.mic-btn {
-  flex-shrink: 0;
-  height: 74px;
-  min-width: 64px;
-  font-size: 18px;
-}
-.mic-btn.is-danger {
-  animation: mic-pulse 1.2s ease-in-out infinite;
-}
-@keyframes mic-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
-}
-
-/* 摘要播报按钮区 */
-.summary-actions {
-  margin-left: auto;
-  align-self: center;
-  flex-shrink: 0;
-}
-
-.example-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 10px;
-  flex-wrap: wrap;
-}
-
-.example-label {
-  font-size: 11px;
-  color: var(--gis-text-muted, #64748b);
-  flex-shrink: 0;
-}
-
-.example-tag {
-  font-size: 11px;
-  padding: 2px 8px;
-  color: var(--gis-accent, #0ea5e9);
-  background: var(--gis-accent-soft, rgba(34, 211, 238, 0.1));
-  border: 1px solid var(--gis-accent-soft, rgba(34, 211, 238, 0.2));
-  border-radius: 12px;
-  cursor: pointer;
-  transition: background 0.15s;
-  white-space: nowrap;
-}
-
-.example-tag:hover {
-  background: var(--gis-hover-tint, rgba(34, 211, 238, 0.2));
-}
-
-.keyboard-hint {
-  margin-top: 6px;
-  font-size: 10px;
-  color: var(--gis-text-muted, #64748b);
-  font-family: ui-monospace, "Consolas", monospace;
-}
-
-/* QueryAgent 解析过程 */
-.agent-parse {
-  flex-shrink: 0;
-  background: var(--gis-glass);
-  backdrop-filter: blur(var(--gis-glass-blur)) saturate(var(--gis-glass-saturate));
-  border: 1px solid var(--gis-glass-border);
-  box-shadow: inset 0 1px 0 var(--gis-glass-highlight);
-  border-left: 3px solid var(--gis-accent, #0ea5e9);
-  border-radius: var(--gis-radius-md, 10px);
-  overflow: hidden;
-}
-
-.agent-parse-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: var(--gis-accent-soft, rgba(34, 211, 238, 0.08));
-  border-bottom: 1px solid var(--gis-accent-soft, rgba(34, 211, 238, 0.15));
-}
-
-.ap-agent-badge {
-  padding: 2px 8px;
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--gis-on-accent, #020617);
-  background: var(--gis-accent, #0ea5e9);
-  border-radius: 10px;
-  font-family: ui-monospace, "Consolas", monospace;
-  letter-spacing: 0.03em;
-}
-
-.ap-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--gis-text, #f8fafc);
-}
-
-.ap-method {
-  margin-left: auto;
-  padding: 1px 10px;
-  font-size: 10px;
-  font-weight: 600;
-  border-radius: 10px;
-  white-space: nowrap;
-}
-.ap-method.llm {
-  color: #4ade80;
-  background: rgba(74, 222, 128, 0.12);
-  border: 1px solid rgba(74, 222, 128, 0.3);
-}
-.ap-method.keyword {
-  color: #94a3b8;
-  background: rgba(148, 163, 184, 0.12);
-  border: 1px solid rgba(148, 163, 184, 0.3);
-}
-
-.agent-parse-body {
-  padding: 8px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.ap-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 11px;
-}
-
-.ap-label {
-  flex-shrink: 0;
-  min-width: 32px;
-  color: var(--gis-text-muted, #64748b);
-  font-family: ui-monospace, "Consolas", monospace;
-}
-
-.ap-value {
-  color: var(--gis-text, #f8fafc);
-  line-height: 1.5;
-  word-break: break-all;
-}
-
-.ap-value.intent {
-  color: var(--gis-accent, #0ea5e9);
-  font-weight: 600;
-}
-
-.ap-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.ap-chip {
-  padding: 1px 8px;
-  font-size: 10px;
-  color: var(--gis-text, #f8fafc);
-  background: var(--gis-accent-soft, rgba(34, 211, 238, 0.08));
-  border: 1px solid var(--gis-accent-soft, rgba(34, 211, 238, 0.2));
-  border-radius: 10px;
-  white-space: nowrap;
-  font-family: ui-monospace, "Consolas", monospace;
-}
-
-.ap-chip em {
-  font-style: normal;
-  color: var(--gis-text-muted, #94a3b8);
-  margin-right: 4px;
-}
-
-/* 结果区 */
-.result-area {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  min-height: 480px; /* 结果区最小高度（与 Agent 中心报告区一致），保证表格/图表/地图有足够展示空间 */
-  gap: 10px;
-}
-
-/* 摘要卡片 */
-.summary-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 12px 14px;
-  background: var(--gis-glass);
-  backdrop-filter: blur(var(--gis-glass-blur)) saturate(var(--gis-glass-saturate));
-  border: 1px solid var(--gis-glass-border);
-  box-shadow: inset 0 1px 0 var(--gis-glass-highlight);
-  border-left: 3px solid var(--gis-accent, #0ea5e9);
-  border-radius: var(--gis-radius-md, 10px);
-  flex-shrink: 0;
-}
-
-.summary-icon {
+.sq-empty__ic {
   width: 22px;
   height: 22px;
-  display: flex;
+  color: var(--fs-ink-400);
+}
+.sq-empty__hint {
+  font-size: 11px;
+  color: var(--fs-ink-400);
+}
+.sq-empty__btn {
+  margin-top: 8px;
+  height: 28px;
+  padding: 0 12px;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 700;
-  font-family: ui-monospace, "Consolas", monospace;
-  color: var(--gis-on-accent, #020617);
-  background: var(--gis-accent, #0ea5e9);
-  border-radius: 50%;
-}
-
-.summary-content {
-  flex: 1;
-  min-width: 0;
-}
-
-.summary-text {
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--gis-text, #f8fafc);
-}
-
-.summary-meta {
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--gis-text-muted, #64748b);
-}
-
-/* Tab 切换 */
-.result-tabs {
-  display: flex;
-  gap: 2px;
-  flex-shrink: 0;
-  background: var(--gis-glass);
-  backdrop-filter: blur(var(--gis-glass-blur)) saturate(var(--gis-glass-saturate));
-  border: 1px solid var(--gis-glass-border);
-  box-shadow: inset 0 1px 0 var(--gis-glass-highlight);
-  border-radius: var(--gis-radius-md, 10px);
-  padding: 2px;
-}
-
-.tab-btn {
-  flex: 1;
-  padding: 7px 12px;
+  border-radius: var(--fs-r-sm, 6px);
   font-size: 12px;
   font-weight: 500;
-  color: var(--gis-text-muted, #94a3b8);
-  background: transparent;
-  border: none;
-  border-radius: 2px;
+  color: var(--fs-ink-700);
+  background: var(--fs-bg-surface);
+  box-shadow: inset 0 0 0 1px var(--fs-hairline-strong);
   cursor: pointer;
-  transition: color 0.15s, background 0.15s;
+  transition: color var(--fs-dur-micro) var(--fs-ease), box-shadow var(--fs-dur-micro) var(--fs-ease), transform var(--fs-dur-micro) var(--fs-ease);
+}
+.sq-empty__btn:hover {
+  color: var(--fs-accent);
+  box-shadow: inset 0 0 0 1px var(--fs-accent);
+  transform: translateY(-1px);
+}
+.sq-empty__btn:active {
+  box-shadow: inset 0 0 0 1px var(--fs-accent);
+  transform: translateY(0.5px);
 }
 
-.tab-btn:hover:not(:disabled) {
-  color: var(--gis-text, #f8fafc);
-  background: var(--gis-hover-tint, rgba(34, 211, 238, 0.08));
+/* ===== 入场微动效（挂载即播，基线即终态；三态闸门可关） ===== */
+.sq-kpi { animation: sqk-in 0.42s var(--fs-ease-out) both; }
+.sq-kpi:nth-child(1) { animation-delay: 0ms; }
+.sq-kpi:nth-child(2) { animation-delay: 55ms; }
+.sq-kpi:nth-child(3) { animation-delay: 110ms; }
+.sq-kpi:nth-child(4) { animation-delay: 165ms; }
+@keyframes sqk-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
 }
-
-.tab-btn.active {
-  color: var(--gis-on-accent, #020617);
-  background: var(--gis-accent, #0ea5e9);
-  font-weight: 600;
+.sq-main, .sq-side { animation: panel-in 0.5s var(--fs-ease-out) both; }
+.sq-side { animation-delay: 0.08s; }
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
 }
-
-.tab-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* 解析方式徽标 */
-.method-badge {
-  align-self: center;
-  margin-left: auto;
-  margin-right: 8px;
-  padding: 2px 10px;
-  font-size: 10px;
-  font-weight: 600;
-  border-radius: 10px;
-  white-space: nowrap;
-}
-.method-badge.llm {
-  color: #4ade80;
-  background: rgba(74, 222, 128, 0.12);
-  border: 1px solid rgba(74, 222, 128, 0.3);
-}
-.method-badge.keyword {
-  color: #94a3b8;
-  background: rgba(148, 163, 184, 0.12);
-  border: 1px solid rgba(148, 163, 184, 0.3);
-}
-
-/* Tab 内容 */
-.tab-content {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--gis-glass);
-  backdrop-filter: blur(var(--gis-glass-blur)) saturate(var(--gis-glass-saturate));
-  border: 1px solid var(--gis-glass-border);
-  box-shadow: inset 0 1px 0 var(--gis-glass-highlight);
-  border-radius: var(--gis-radius-md, 10px);
-  padding: 12px;
-  overflow: hidden;
-}
-
-.tab-summary .summary-full {
-  flex: 1;
-  overflow-y: auto;
-  font-size: 13px;
-  line-height: 1.7;
-  color: var(--gis-text, #f8fafc);
-  white-space: pre-wrap;
-}
-
-.tab-fill {
-  padding: 4px;
-}
-
-/* 表格：外层不再滚动，由表格自身接管，消除双重滚动条 */
-.table-wrap {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.result-table {
-  width: 100%;
-  height: 100%;
-}
-
-/* 图表 */
-.chart-container {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-}
-
-/* 地图 */
-.map-container {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  border-radius: 3px;
-  overflow: hidden;
-}
-.map-empty {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  color: var(--gis-text-muted, #94a3b8);
-  background: var(--gis-accent-soft, rgba(2, 6, 23, 0.4));
-  border: 1px dashed var(--gis-border, #334155);
-  border-radius: 3px;
-}
-.map-container :deep(.ol-attribution) {
-  background: var(--gis-mask, rgba(2, 6, 23, 0.6));
-  font-size: 10px;
-}
-.map-container :deep(.ol-control button) {
-  background: var(--gis-mask, rgba(2, 6, 23, 0.6));
-}
-.map-container :deep(.ol-control button:hover) {
-  background: var(--gis-accent, #0ea5e9);
-}
-
-/* 表格 */
-.result-table :deep(.el-table) {
-  --el-table-bg-color: transparent !important;
-  --el-table-tr-bg-color: transparent !important;
-  --el-table-header-bg-color: var(--gis-table-header, #020617) !important;
-  --el-table-row-hover-bg-color: var(--gis-hover-tint, rgba(34, 211, 238, 0.08)) !important;
-  color: var(--gis-text, #f8fafc) !important;
-}
-
-.result-table :deep(th.el-table__cell) {
-  background: var(--gis-table-header, #020617) !important;
-  color: var(--gis-accent, #0ea5e9) !important;
-  font-size: 11px;
-  font-family: ui-monospace, "Consolas", monospace;
-  border-bottom: 1px solid var(--gis-border, #334155) !important;
-}
-
-.result-table :deep(td.el-table__cell) {
-  background: var(--gis-bg-panel-2, rgba(15, 23, 42, 0.92)) !important;
-  color: var(--gis-text, #f8fafc) !important;
-  border-bottom: 1px solid var(--gis-border, #334155) !important;
-  font-size: 11px;
-}
-
-/* 空状态 */
-.empty-state {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  background: var(--gis-glass);
-  backdrop-filter: blur(var(--gis-glass-blur)) saturate(var(--gis-glass-saturate));
-  border: 1px solid var(--gis-glass-border);
-  box-shadow: inset 0 1px 0 var(--gis-glass-highlight);
-  border-radius: var(--gis-radius-md, 10px);
-}
-
-.empty-icon {
-  font-size: 48px;
-  opacity: 0.3;
-  color: var(--gis-text-muted, #94a3b8);
-}
-
-.empty-text {
-  font-size: 13px;
-  color: var(--gis-text-muted, #94a3b8);
-  max-width: 300px;
-  text-align: center;
-  line-height: 1.6;
+html[data-motion-allowed="false"] .sq-main,
+html[data-motion-allowed="false"] .sq-side,
+html[data-motion-allowed="false"] .sq-kpi { animation: none; }
+html[data-motion-allowed="false"] .sq-empty__btn:hover,
+html[data-motion-allowed="false"] .sq-empty__btn:active { transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="on"]) .sq-main,
+  html:not([data-motion="on"]) .sq-side,
+  html:not([data-motion="on"]) .sq-kpi { animation: none; }
+  html:not([data-motion="on"]) .sq-empty__btn:hover,
+  html:not([data-motion="on"]) .sq-empty__btn:active { transform: none; }
 }
 </style>

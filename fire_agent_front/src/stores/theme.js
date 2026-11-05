@@ -10,6 +10,8 @@ import { ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 
 const STORAGE_KEY = 'fire_agent_theme'
+/** 视觉体系 v2 开关：localStorage 置 'off' 即整站回退到 gis-theme.css 旧视觉 */
+const V2_KEY = 'fire_agent_theme_v2'
 
 /** 把主题模式同步到 <html> 根节点 */
 export function applyTheme(mode) {
@@ -19,6 +21,7 @@ export function applyTheme(mode) {
   } else {
     root.classList.remove('dark')
   }
+  root.classList.toggle('theme-v2', localStorage.getItem(V2_KEY) !== 'off')
 }
 
 export const useThemeStore = defineStore('theme', () => {

@@ -39,6 +39,41 @@ function splitTableRow(line) {
   return s.split('|').map(c => c.trim())
 }
 
+/**
+ * 拆分推理模型的思考过程与最终回答 → { reasoning, answer }
+ *
+ * 兼容三种形态（qwen3 / DeepSeek 系模型，含历史脏数据）：
+ * - 成对 <think>…</think>            → 思考入 reasoning；
+ * - 未闭合 <think>…（流中断）        → 其后内容入 reasoning，前置文字留在 answer；
+ * - 孤立 </think>（开头标签缺失的旧数据）→ 之前全部视作思考，之后为回答。
+ */
+export function splitThink(text) {
+  if (!text) return { reasoning: '', answer: '' }
+  let t = String(text)
+  const reasoning = []
+  t = t.replace(/<think>([\s\S]*?)<\/think>\s*/g, (m, inner) => {
+    if (inner.trim()) reasoning.push(inner.trim())
+    return ''
+  })
+  if (t.includes('<think>')) {
+    const i = t.indexOf('<think>')
+    if (t.slice(i + 7).trim()) reasoning.push(t.slice(i + 7).trim())
+    t = t.slice(0, i)
+  } else if (t.includes('</think>')) {
+    const i = t.indexOf('</think>')
+    if (t.slice(0, i).trim()) reasoning.push(t.slice(0, i).trim())
+    t = t.slice(i + 8)
+  }
+  return { reasoning: reasoning.join('\n'), answer: t.trim() }
+}
+
+/**
+ * 剥离思考过程，仅保留正文（播报 / 纯文本场景）
+ */
+export function stripThink(text) {
+  return splitThink(text).answer
+}
+
 export function renderMarkdown(md) {
   if (!md) return ''
   const lines = String(md).replace(/\r\n/g, '\n').split('\n')
@@ -154,6 +189,16 @@ export function renderMarkdown(md) {
            !lines[i].trim().startsWith('|')) {
       buf.push(lines[i])
       i++
+    }
+    // 进度保证：以上分支全部没吃掉这一行时（典型是「以 | 开头但不是合法表格」的悬空
+    // 表格行——上面所有块级条件都排除它，段落条件也排除它），buf 会是空的且 i 不前进，
+    // 下一轮循环原地命中同一分支 → 死循环，整页冻结。这是渲染器唯一的硬失败模式，
+    // 报告/思考/知识库正文都来自模型输出，出现这种行的概率不低。
+    // 兜底：按字面文本转义输出一行，绝不空转。
+    if (!buf.length) {
+      out.push(`<p>${renderInline(lines[i])}</p>`)
+      i++
+      continue
     }
     out.push(`<p>${renderInline(buf.join(' '))}</p>`)
   }

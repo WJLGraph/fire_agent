@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark" data-accent="ember" data-serif="on" data-motion="on" data-density="normal" data-radius="normal" data-sidebar="expand" data-charts="two">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>焰哨 FlameSentry · 视觉重构 V0 原型</title>
+<link rel="stylesheet" href="visual-v0.css">
+</head>
+<body>
+
+<!-- ===================== 图标精灵（20px 线性 SVG，stroke 1.5，round cap） ===================== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="s"><!-- 公共属性由 CSS 继承不便，逐图标内联 --></g>
+  </defs>
+  <symbol id="i-map" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 5.6 7.6 4l4.8 1.5L17 4v11.2l-4.6 1.6-4.8-1.5L3 16.8z"/><path d="M7.6 4v11.7M12.4 5.5v11.3"/>
+  </symbol>
+  <symbol id="i-crosshair" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+    <circle cx="10" cy="10" r="5.5"/><path d="M10 1.5v3M10 15.5v3M1.5 10h3M15.5 10h3"/>
+  </symbol>
+  <symbol id="i-layers" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 2.5 3 6l7 3.5L17 6z"/><path d="M3 10.2 10 13.7 17 10.2"/><path d="M3 14 10 17.5 17 14"/>
+  </symbol>
+  <symbol id="i-nodes" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+    <circle cx="10" cy="10" r="2.2"/><circle cx="4" cy="4.5" r="1.9"/><circle cx="16" cy="4.5" r="1.9"/><circle cx="4" cy="15.5" r="1.9"/><circle cx="16" cy="15.5" r="1.9"/>
+    <path d="M5.6 5.8 8.4 8.6M14.4 5.8 11.6 8.6M5.6 14.2 8.4 11.4M14.4 14.2 11.6 11.4"/>
+  </symbol>
+  <symbol id="i-file" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 2.5h6.2L15 6.3v11.2H5z"/><path d="M11.2 2.5V6.3H15"/><path d="M7.4 10.4h5.2M7.4 13.4h5.2"/>
+  </symbol>
+  <symbol id="i-sliders" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+    <path d="M3 6h14M3 10h14M3 14h14"/><circle cx="7.5" cy="6" r="1.8"/><circle cx="13" cy="10" r="1.8"/><circle cx="6" cy="14" r="1.8"/>
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+    <circle cx="10" cy="10" r="3.6"/><path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.6 4.6l1.4 1.4M14 14l1.4 1.4M15.4 4.6 14 6M6 14l-1.4 1.4"/>
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M16 12.4A7 7 0 0 1 7.6 4a7.2 7.2 0 1 0 8.4 8.4z"/>
+  </symbol>
+  <symbol id="i-power" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+    <path d="M10 2.8v6.4"/><path d="M6.2 5.6a5.6 5.6 0 1 0 7.6 0"/>
+  </symbol>
+  <symbol id="i-search" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+    <circle cx="9" cy="9" r="5.5"/><path d="m13.2 13.2 3.3 3.3"/>
+  </symbol>
+  <symbol id="i-download" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 3v8.6"/><path d="m6.4 8.2 3.6 3.6 3.6-3.6"/><path d="M3.5 15.4v1.1h13v-1.1"/>
+  </symbol>
+  <symbol id="i-print" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 7V3h8v4"/><path d="M5 7h10a1.5 1.5 0 0 1 1.5 1.5v4H3.5v-4A1.5 1.5 0 0 1 5 7z"/><path d="M6 12.5h8V17H6z"/>
+  </symbol>
+  <symbol id="i-trash" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3.5 5.5h13"/><path d="M8 2.8h4"/><path d="M5.2 5.5 5.9 17h8.2l.7-11.5"/><path d="M8.4 8.4v5.4M11.6 8.4v5.4"/>
+  </symbol>
+  <symbol id="i-sound" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 8v4h2.6l3.4 3V5L6.6 8z"/><path d="M13.2 7.6a3.6 3.6 0 0 1 0 4.8"/>
+  </symbol>
+  <symbol id="i-close" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/></symbol>
+  <symbol id="i-check" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 10.4 3.6 3.6 7.4-8"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.2 2.8 16.4h14.4z"/><path d="M10 8v3.6"/><path d="M10 14.1h.01"/></symbol>
+  <symbol id="i-flame" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.2s4.4 3.4 4.4 7.2a4.4 4.4 0 1 1-8.8 0c0-1.6.8-2.8.8-2.8s.6 1.4 1.6 1.4c1.4 0 1.6-2.4 2-5.8z"/></symbol>
+  <symbol id="i-draw" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17 14.5 5.5l2.4 2.4L5.4 19.4z"/><path d="m12.6 3.6 2.4 2.4"/></symbol>
+  <symbol id="i-measure" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.6 13.2 13.2 2.6"/><path d="M5.4 2.6h7.8v7.8"/><path d="M2.6 17.4h15"/></symbol>
+  <symbol id="i-cube" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.6 17 6.4v7.2L10 17.4 3 13.6V6.4z"/><path d="M3 6.4 10 10.2l7-3.8M10 10.2v7.2"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16.4 8.4A6.6 6.6 0 1 0 10 16.6a6.6 6.6 0 0 0 4.6-1.9"/><path d="M16.6 3.6v5h-5"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.6 3.4 16.6 6.4 7.8 15.2l-4 .8.8-4z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M10 5.6V10l2.8 1.8"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10h12"/><path d="m11.4 5.4 4.6 4.6-4.6 4.6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 4.5v11M4.5 10h11"/></symbol>
+</svg>
+
+<!-- ===================== 原型导航（不属于产品） ===================== -->
+<nav class="chrome-bar">
+  <button class="seg-btn is-on" data-screen="dashboard">作战大屏</button>
+  <button class="seg-btn" data-screen="smartquery">智能查询</button>
+  <button class="seg-btn" data-screen="kb">知识库</button>
+  <button class="seg-btn" data-screen="agent">Agent 中心</button>
+  <button class="seg-btn" data-screen="report">报告中心</button>
+  <button class="seg-btn" data-screen="admin">系统管理</button>
+  <button class="seg-btn" data-screen="profile">个人中心</button>
+  <button class="seg-btn" data-screen="login">登录</button>
+  <button class="seg-btn" data-screen="kit">组件样例</button>
+  <span class="chrome-div"></span>
+  <button class="seg-btn" id="chromeTheme" title="切换明暗主题">◐ 主题</button>
+</nav>
+
+<div class="stage-wrap">
+<div class="stage" id="stage">
+<div class="app" id="app" data-screen="dashboard">
+
+  <!-- ===================== 侧栏 ===================== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand__cn">焰哨</span>
+      <span class="brand__en">FLAMESENTRY</span>
+    </div>
+    <nav class="side-nav">
+      <a class="nav-item is-on" href="#" data-screen="dashboard">
+        <svg class="icon"><use href="#i-map"/></svg><span class="nav-item__label">作战大屏</span>
+      </a>
+      <a class="nav-item" href="#" data-screen="smartquery">
+        <svg class="icon"><use href="#i-crosshair"/></svg><span class="nav-item__label">智能查询</span>
+      </a>
+      <a class="nav-item" href="#" data-screen="kb">
+        <svg class="icon"><use href="#i-layers"/></svg><span class="nav-item__label">知识库</span>
+      </a>
+      <a class="nav-item" href="#" data-screen="agent">
+        <svg class="icon"><use href="#i-nodes"/></svg><span class="nav-item__label">Agent中心</span>
+      </a>
+      <a class="nav-item" href="#" data-screen="report">
+        <svg class="icon"><use href="#i-file"/></svg><span class="nav-item__label">报告中心</span>
+      </a>
+      <a class="nav-item" href="#" data-screen="admin">
+        <svg class="icon"><use href="#i-sliders"/></svg><span class="nav-item__label">系统管理</span>
+      </a>
+    </nav>
+    <div class="side-foot">
+      <div class="side-user">
+        <span class="side-user__avatar">值</span>
+        <span class="side-user__name">值班员</span>
+        <span class="side-user__role">OPERATOR</span>
+      </div>
+      <div class="side-actions">
+        <button class="icon-btn" id="sideTheme" title="切换主题"><svg class="icon icon--sm"><use href="#i-sun"/></svg></button>
+        <button class="icon-btn" data-screen="profile" title="个人中心"><svg class="icon icon--sm"><use href="#i-sliders"/></svg></button>
+        <button class="icon-btn" title="退出登录"><svg class="icon icon--sm"><use href="#i-power"/></svg></button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===================== 主区 ===================== -->
+  <div class="main">
+
+    <!-- ---------- 作战大屏 ---------- -->
+    <section class="screen is-on" data-screen="dashboard">
+      <header class="dash-top anim" style="--d:0ms">
+        <div class="dash-top__brand">
+          <span class="dash-top__cn">焰哨 · 作战大屏</span>
+          <span class="dash-top__en">FLAME SENTRY · SITUATION ROOM</span>
+        </div>
+        <div class="dash-top__sp"></div>
+        <div class="kpi-row">
+          <div class="kpi">
+            <span class="kpi__lb">当前火点</span>
+            <span class="kpi__v num" data-count="1284">0</span>
+          </div>
+          <div class="kpi kpi--hot">
+            <span class="kpi__lb">高风险州市</span>
+            <span class="kpi__v num" data-count="4">0</span>
+          </div>
+          <div class="kpi">
+            <span class="kpi__lb">预警等级</span>
+            <span class="kpi__v" style="font-size:20px">高<span class="kpi__u">Ⅲ 级</span></span>
+          </div>
+        </div>
+        <div class="dash-top__clock">
+          <span class="dash-top__time" id="dashClock">2026-11-01 15:42:07</span>
+          <span class="dash-top__weather">昆明 · 晴 18°C · 湿度 31% · 西南风 3 级</span>
+        </div>
+      </header>
+
+      <div class="dash-body">
+        <!-- 地图：唯一主角 -->
+        <div class="map-area">
+          <div class="map-canvas" id="mapCanvas"></div>
+
+          <div class="map-src"><span class="badge__dot" style="background:var(--fs-success)"></span>后端数据 · 已同步 15:42</div>
+
+          <div class="map-coord">102.8321°E &nbsp; 24.8804°N &nbsp;·&nbsp; EPSG:4326</div>
+
+          <div class="map-legend">
+            <span class="map-legend__t">火险等级</span>
+            <span class="map-legend__i"><i style="background:var(--fs-risk-low)"></i>低</span>
+            <span class="map-legend__i"><i style="background:var(--fs-risk-mid)"></i>中</span>
+            <span class="map-legend__i"><i style="background:var(--fs-risk-high)"></i>高</span>
+            <span class="map-legend__i"><i style="background:var(--fs-risk-extreme)"></i>极高</span>
+          </div>
+
+          <div class="map-tools">
+            <button class="map-tools__i"><svg class="icon icon--sm"><use href="#i-layers"/></svg>图层</button>
+            <button class="map-tools__i"><svg class="icon icon--sm"><use href="#i-draw"/></svg>标绘</button>
+            <button class="map-tools__i"><svg class="icon icon--sm"><use href="#i-measure"/></svg>量测</button>
+            <span class="map-tools__sep"></span>
+            <button class="map-tools__i"><svg class="icon icon--sm"><use href="#i-download"/></svg>导出 PNG</button>
+            <span class="map-tools__sep"></span>
+            <button class="map-tools__i is-on"><svg class="icon icon--sm"><use href="#i-map"/></svg>2D</button>
+            <button class="map-tools__i"><svg class="icon icon--sm"><use href="#i-cube"/></svg>3D</button>
+          </div>
+
+          <button class="vision-tab" id="visionTab" title="AI 火情识别任务"><svg class="icon icon--sm"><use href="#i-flame"/></svg></button>
+
+          <aside class="vision-drawer">
+            <div class="vision-drawer__hd">
+              <svg class="icon icon--sm" style="color:var(--fs-accent)"><use href="#i-flame"/></svg>
+              <h3>AI 火情识别</h3>
+              <span class="vision-drawer__sp"></span>
+              <span class="badge badge--muted">3 个任务</span>
+              <button class="icon-btn" id="visionClose"><svg class="icon icon--sm"><use href="#i-close"/></svg></button>
+            </div>
+            <div class="vision-drawer__bd">
+              <div class="task-card">
+                <div class="task-card__hd">
+                  <span class="task-card__t">楚雄州 · 影像火点复核</span>
+                  <span class="task-card__sp"></span>
+                  <span class="badge badge--high"><i class="badge__dot"></i>高</span>
+                </div>
+                <span class="task-card__m">识别 12 处疑似火点 · 置信度 0.86 · 15:38</span>
+              </div>
+              <div class="task-card">
+                <div class="task-card__hd">
+                  <span class="task-card__t">普洱市 · 夜间热异常</span>
+                  <span class="task-card__sp"></span>
+                  <span class="badge badge--mid"><i class="badge__dot"></i>中</span>
+                </div>
+                <span class="task-card__m">识别 4 处热异常 · 置信度 0.71 · 15:31</span>
+              </div>
+              <div class="task-card">
+                <div class="task-card__hd">
+                  <span class="task-card__t">丽江市 · 烟羽扩散追踪</span>
+                  <span class="task-card__sp"></span>
+                  <span class="badge badge--low"><i class="badge__dot"></i>低</span>
+                </div>
+                <span class="task-card__m">烟羽方向 西南 · 置信度 0.63 · 15:12</span>
+              </div>
+            </div>
+          </aside>
+        </div>
+
+        <!-- 右栏：两块 tab -->
+        <aside class="dash-rail">
+          <div class="rail-head">
+            <div class="seg" id="railSeg">
+              <button class="seg__i is-on" data-tab="history">历史</button>
+              <button class="seg__i" data-tab="predict">预测</button>
+            </div>
+            <span class="rail-head__sp"></span>
+            <div class="field" style="width:104px;height:28px">
+              <input value="2025-03" readonly style="font-family:var(--fs-font-mono);font-size:11px">
+            </div>
+          </div>
+          <div class="rail-scroll" id="railScroll"></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ---------- 智能查询 ---------- -->
+    <section class="screen" data-screen="smartquery">
+      <header class="page-head anim" style="--d:0ms">
+        <div class="page-head__t">
+          <h1 class="page-head__h1">智能查询</h1>
+          <p class="page-head__sub">自然语言提问 · QueryAgent 解析 → 摘要 / 表格 / 图表 / 地图</p>
+        </div>
+        <div class="page-head__sp"></div>
+        <div class="page-head__ops">
+          <span class="badge badge--muted mono">qwen-plus · LLM / keyword 双通道</span>
+          <span class="badge"><i class="badge__dot" style="background:var(--fs-success)"></i>QueryAgent 就绪</span>
+        </div>
+      </header>
+
+      <div class="sq-body">
+        <!-- 左：提问 + 示例 + 历史 -->
+        <div class="agent-col agent-col--l">
+          <div class="col-scroll" style="gap:24px">
+            <div class="anim" style="display:flex;flex-direction:column;gap:12px;--d:60ms">
+              <span class="sec-t">提问</span>
+              <textarea class="textarea" rows="3">统计楚雄州 2025 年 3 月的火点数量并按县级排名</textarea>
+              <div class="kit-row" style="justify-content:space-between">
+                <button class="btn btn--ghost" style="height:28px"><svg class="icon icon--sm"><use href="#i-sound"/></svg>语音输入</button>
+                <button class="btn btn--primary" style="height:32px"><svg class="icon icon--sm"><use href="#i-arrow"/></svg>执行查询</button>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:12px">
+              <span class="sec-t">示例问题</span>
+              <div class="sq-chips">
+                <button class="sq-chip">近 30 天火点 Top5 州市</button>
+                <button class="sq-chip">2026 年 3 月火险等级占比</button>
+                <button class="sq-chip">昆明 vs 楚雄 火点频次对比</button>
+                <button class="sq-chip">明天哪些州市是极高火险</button>
+                <button class="sq-chip">2025 年火点最多的十个县</button>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:12px">
+              <span class="sec-t">查询历史</span>
+              <div class="hist-item">
+                <span class="hist-item__t">统计楚雄州 2025 年 3 月的火点数量并按县级排名</span>
+                <span class="hist-item__m"><span>15:38</span><span class="badge badge--accent">LLM 解析</span><span>412 条</span></span>
+              </div>
+              <div class="hist-item">
+                <span class="hist-item__t">近 30 天火点最多的五个州市</span>
+                <span class="hist-item__m"><span>14:21</span><span class="badge badge--muted">关键词</span><span>5 条</span></span>
+              </div>
+              <div class="hist-item">
+                <span class="hist-item__t">2026 年 2 月普洱市逐日火险等级</span>
+                <span class="hist-item__m"><span>11:05</span><span class="badge badge--accent">LLM 解析</span><span>28 条</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右：解析流水线 + 结果 -->
+        <div class="sq-main">
+          <div class="col-scroll" style="gap:24px">
+
+            <!-- QueryAgent 解析（v0 时间轴同构） -->
+            <div class="sq-parse anim" style="--d:60ms">
+              <div class="sq-parse__hd">
+                <span class="sq-parse__t">QueryAgent 解析</span>
+                <span class="sq-parse__sp"></span>
+                <span class="badge badge--accent">LLM 解析</span>
+                <span class="badge badge--muted mono">耗时 0.8s</span>
+              </div>
+              <div class="sq-parse__grid">
+                <div class="sq-parse__r"><span class="sq-parse__k">查询意图</span><span class="sq-parse__v">统计排名 <span class="sq-parse__d">count + rank</span></span></div>
+                <div class="sq-parse__r"><span class="sq-parse__k">空间范围</span><span class="sq-parse__v">楚雄彝族自治州</span></div>
+                <div class="sq-parse__r"><span class="sq-parse__k">时间窗口</span><span class="sq-parse__v mono">2025-03-01 ~ 2025-03-31</span></div>
+                <div class="sq-parse__r"><span class="sq-parse__k">输出形态</span><span class="sq-parse__v">表格 + 摘要</span></div>
+              </div>
+            </div>
+
+            <!-- 结果概览 KPI -->
+            <div class="sq-kpis anim" style="--d:120ms">
+              <div class="sq-kpi"><span class="sq-kpi__v">412</span><span class="sq-kpi__k">火点总数</span></div>
+              <div class="sq-kpi"><span class="sq-kpi__v">03-14</span><span class="sq-kpi__k">峰值日</span></div>
+              <div class="sq-kpi"><span class="sq-kpi__v">10</span><span class="sq-kpi__k">涉及县市</span></div>
+              <div class="sq-kpi"><span class="sq-kpi__v" style="color:var(--fs-risk-high)">高</span><span class="sq-kpi__k">峰值等级</span></div>
+            </div>
+
+            <!-- 结果区：seg 切换 + 三线表 -->
+            <div class="sq-panel anim" style="--d:180ms">
+              <div class="sq-panel__hd">
+                <span class="sq-panel__t">查询结果</span>
+                <span class="badge badge--muted mono">412 rows</span>
+                <span class="sq-panel__sp"></span>
+                <div class="seg">
+                  <button class="seg__i">摘要</button>
+                  <button class="seg__i is-on">表格</button>
+                  <button class="seg__i">图表</button>
+                  <button class="seg__i">地图</button>
+                </div>
+                <button class="btn btn--ghost" style="height:28px"><svg class="icon icon--sm"><use href="#i-download"/></svg>导出 CSV</button>
+              </div>
+              <div class="sq-panel__note">楚雄州 2025 年 3 月共监测到火点 <strong>412</strong> 处，其中元谋、永仁两县合计占 <strong>58.7%</strong>，与干热河谷分布高度重合。</div>
+              <table class="tbl">
+                <thead><tr><th>排名</th><th>县区</th><th class="num">火点数</th><th class="num">占比</th><th>峰值等级</th></tr></thead>
+                <tbody>
+                  <tr><td class="num">1</td><td>元谋县</td><td class="num">142</td><td class="num">34.5%</td><td><span class="badge badge--extreme"><i class="badge__dot"></i>极高</span></td></tr>
+                  <tr><td class="num">2</td><td>永仁县</td><td class="num">100</td><td class="num">24.3%</td><td><span class="badge badge--high"><i class="badge__dot"></i>高</span></td></tr>
+                  <tr><td class="num">3</td><td>大姚县</td><td class="num">68</td><td class="num">16.5%</td><td><span class="badge badge--high"><i class="badge__dot"></i>高</span></td></tr>
+                  <tr><td class="num">4</td><td>楚雄市</td><td class="num">45</td><td class="num">10.9%</td><td><span class="badge badge--mid"><i class="badge__dot"></i>中</span></td></tr>
+                  <tr><td class="num">5</td><td>禄丰市</td><td class="num">31</td><td class="num">7.5%</td><td><span class="badge badge--mid"><i class="badge__dot"></i>中</span></td></tr>
+                  <tr><td class="num">6</td><td>武定县</td><td class="num">26</td><td class="num">6.3%</td><td><span class="badge badge--low"><i class="badge__dot"></i>低</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 知识库 RAG ---------- -->
+    <section class="screen" data-screen="kb">
+      <header class="page-head anim" style="--d:0ms">
+        <div class="page-head__t">
+          <h1 class="page-head__h1">知识库</h1>
+          <p class="page-head__sub">文档上传 · RAG 检索问答 · 引用溯源</p>
+        </div>
+        <div class="page-head__sp"></div>
+        <div class="page-head__ops">
+          <span class="badge badge--muted mono">qwen-plus · 流式回答</span>
+          <span class="badge"><i class="badge__dot" style="background:var(--fs-success)"></i>向量检索 就绪</span>
+        </div>
+      </header>
+
+      <div class="sq-body">
+        <!-- 左：文档库 + 问答历史 -->
+        <div class="agent-col agent-col--l">
+          <div class="col-scroll" style="gap:24px">
+            <div class="anim" style="display:flex;flex-direction:column;gap:12px;--d:60ms">
+              <span class="sec-t">文档库<span class="kb-n">6</span></span>
+              <div class="kb-drop">
+                <svg class="icon"><use href="#i-file"/></svg>
+                <span>点击 / 拖拽上传文档</span>
+                <em>PDF · DOCX · TXT · MD ≤ 20MB</em>
+              </div>
+              <div class="kb-doc">
+                <span class="kb-doc__t">云南省森林防火条例.pdf</span>
+                <span class="kb-doc__m"><span class="mono">142 chunks</span><span class="badge badge--low"><i class="badge__dot"></i>已索引</span></span>
+              </div>
+              <div class="kb-doc">
+                <span class="kb-doc__t">计划烧除技术规程.docx</span>
+                <span class="kb-doc__m"><span class="mono">58 chunks</span><span class="badge badge--low"><i class="badge__dot"></i>已索引</span></span>
+              </div>
+              <div class="kb-doc">
+                <span class="kb-doc__t">2025 年春秋季火险研判报告.pdf</span>
+                <span class="kb-doc__m"><span class="mono">96 chunks</span><span class="badge badge--low"><i class="badge__dot"></i>已索引</span></span>
+              </div>
+              <div class="kb-doc is-err">
+                <span class="kb-doc__t">火场通讯录扫描件.pdf</span>
+                <span class="kb-doc__m"><span class="mono">0 chunks</span><span class="badge badge--muted">提取失败</span></span>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:12px">
+              <span class="sec-t">问答历史</span>
+              <div class="hist-item">
+                <span class="hist-item__t">计划烧除应该满足哪些气象条件？</span>
+                <span class="hist-item__m"><span>15:42</span><span class="mono">5 处引用</span></span>
+              </div>
+              <div class="hist-item">
+                <span class="hist-item__t">地表火与树冠火的处置差异</span>
+                <span class="hist-item__m"><span>14:18</span><span class="mono">3 处引用</span></span>
+              </div>
+              <div class="hist-item">
+                <span class="hist-item__t">风力达到几级应当停止烧除作业</span>
+                <span class="hist-item__m"><span>11:26</span><span class="mono">2 处引用</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右：提问 → 检索 → 回答 → 引用 -->
+        <div class="sq-main">
+          <div class="col-scroll" style="gap:20px">
+
+            <!-- 提问卡 -->
+            <div class="kb-q anim" style="--d:60ms">
+              <textarea class="textarea" rows="2">计划烧除应该满足哪些气象条件？</textarea>
+              <div class="sq-chips">
+                <button class="sq-chip">计划烧除应该满足哪些气象条件？</button>
+                <button class="sq-chip">风力达到几级应当停止烧除作业？</button>
+                <button class="sq-chip">地表火与树冠火的处置差异</button>
+              </div>
+              <div class="kit-row" style="justify-content:space-between">
+                <button class="btn btn--ghost" style="height:28px"><svg class="icon icon--sm"><use href="#i-sound"/></svg>语音提问</button>
+                <button class="btn btn--primary" style="height:32px"><svg class="icon icon--sm"><use href="#i-arrow"/></svg>提问</button>
+              </div>
+            </div>
+
+            <!-- 检索过程（sq-parse 卡同构） -->
+            <div class="sq-parse anim" style="--d:120ms">
+              <div class="sq-parse__hd">
+                <span class="sq-parse__t">检索过程</span>
+                <span class="sq-parse__sp"></span>
+                <span class="badge badge--muted mono">耗时 0.3s</span>
+              </div>
+              <div class="sq-parse__grid">
+                <div class="sq-parse__r"><span class="sq-parse__k">命中分片</span><span class="sq-parse__v">Top 5 <span class="sq-parse__d">bge-reranker 重排</span></span></div>
+                <div class="sq-parse__r"><span class="sq-parse__k">向量库规模</span><span class="sq-parse__v mono">1,286 chunks</span></div>
+                <div class="sq-parse__r"><span class="sq-parse__k">最高相似度</span><span class="sq-parse__v mono">0.87</span></div>
+                <div class="sq-parse__r"><span class="sq-parse__k">检索来源</span><span class="sq-parse__v">云南省森林防火条例.pdf 等 3 份文档</span></div>
+              </div>
+            </div>
+
+            <!-- RAG 回答（流式打字机 + 引用角标） -->
+            <div class="kb-ans anim" style="--d:180ms">
+              <div class="kb-ans__hd">
+                <span class="kb-ans__t">RAG 回答</span>
+                <span class="sq-panel__sp"></span>
+                <button class="btn btn--ghost" style="height:26px"><svg class="icon icon--sm"><use href="#i-sound"/></svg>播报</button>
+                <button class="btn btn--ghost" style="height:26px"><svg class="icon icon--sm"><use href="#i-download"/></svg>复制</button>
+              </div>
+              <div class="kb-ans__bd">
+                <p>计划烧除需同时满足以下气象条件<strong><sup>[1]</sup></strong>：空气相对湿度在 <strong>30% – 55%</strong> 之间，风速不大于 <strong>3 级（≤ 5.4 m/s）</strong>，且未来 24 小时内无降水过程；气温宜在 <strong>15 ℃ 以下</strong>，避免高温时段作业<strong><sup>[2]</sup></strong>。</p>
+                <p>当风力达到 <strong>4 级及以上</strong>，或相对湿度低于 <strong>30%</strong> 时，应当立即停止烧除作业并清理余火<strong><sup>[3]</sup></strong>。</p>
+              </div>
+            </div>
+
+            <!-- 引用溯源 -->
+            <div class="anim" style="display:flex;flex-direction:column;gap:12px;--d:220ms">
+              <span class="sec-t">引用溯源<span class="kb-n">5</span></span>
+              <div class="kb-cite">
+                <span class="kb-cite__i">1</span>
+                <div class="kb-cite__b">
+                  <span class="kb-cite__t">云南省森林防火条例.pdf<span class="mono"> · chunk 34 · 0.87</span></span>
+                  <p class="kb-cite__p">…计划烧除应当选择在空气相对湿度 30% – 55%、风力不大于三级的气象条件下进行，并开设防火隔离带…</p>
+                </div>
+              </div>
+              <div class="kb-cite">
+                <span class="kb-cite__i">2</span>
+                <div class="kb-cite__b">
+                  <span class="kb-cite__t">计划烧除技术规程.docx<span class="mono"> · chunk 12 · 0.81</span></span>
+                  <p class="kb-cite__p">…作业时段宜选择气温 15 ℃ 以下的早晨，避开午间高温与午后风力增大时段…</p>
+                </div>
+              </div>
+              <div class="kb-cite">
+                <span class="kb-cite__i">3</span>
+                <div class="kb-cite__b">
+                  <span class="kb-cite__t">2025 年春秋季火险研判报告.pdf<span class="mono"> · chunk 71 · 0.76</span></span>
+                  <p class="kb-cite__p">…当预报风力达四级以上或湿度低于 30% 时，一律停止审批与实施烧除，并组织清理余火…</p>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 系统管理 ---------- -->
+    <section class="screen" data-screen="admin">
+      <header class="page-head anim" style="--d:0ms">
+        <div class="page-head__t">
+          <h1 class="page-head__h1">系统管理</h1>
+          <p class="page-head__sub">系统总览 · 用户 · 模型接入 · 数据源 · Agent 参数 · 运行日志</p>
+        </div>
+        <div class="page-head__sp"></div>
+        <div class="page-head__ops">
+          <span class="badge badge--muted mono">ROLE · ADMIN</span>
+          <span class="badge"><i class="badge__dot" style="background:var(--fs-success)"></i>全部服务正常</span>
+        </div>
+      </header>
+
+      <div class="sq-main">
+        <div class="col-scroll" style="gap:20px">
+          <!-- 标签页 -->
+          <div class="atabs anim" style="--d:40ms">
+            <button class="atabs__i is-on">系统总览</button>
+            <button class="atabs__i">用户管理</button>
+            <button class="atabs__i">模型接入</button>
+            <button class="atabs__i">数据源</button>
+            <button class="atabs__i">Agent 参数</button>
+            <button class="atabs__i">运行日志</button>
+          </div>
+
+          <!-- 总览 KPI -->
+          <div class="sq-kpis anim" style="--d:80ms">
+            <div class="sq-kpi"><span class="sq-kpi__v">3</span><span class="sq-kpi__k">在线用户</span></div>
+            <div class="sq-kpi"><span class="sq-kpi__v">4</span><span class="sq-kpi__k">接入模型</span></div>
+            <div class="sq-kpi"><span class="sq-kpi__v">2</span><span class="sq-kpi__k">数据源</span></div>
+            <div class="sq-kpi"><span class="sq-kpi__v">1,286</span><span class="sq-kpi__k">今日调用</span></div>
+          </div>
+
+          <div class="adm-grid anim" style="--d:120ms">
+            <!-- 用户管理 -->
+            <div class="kb-ans">
+              <div class="kb-ans__hd">
+                <span class="kb-ans__t">用户管理</span>
+                <span class="sq-panel__sp"></span>
+                <button class="btn btn--ghost" style="height:26px"><svg class="icon icon--sm"><use href="#i-search"/></svg>搜索</button>
+                <button class="btn btn--primary" style="height:26px">新建用户</button>
+              </div>
+              <div class="kb-ans__bd" style="padding:0">
+                <table class="tbl" style="margin:0">
+                  <thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead>
+                  <tbody>
+                    <tr><td>值班员</td><td><span class="badge badge--accent">ADMIN</span></td><td><span class="badge badge--low"><i class="badge__dot"></i>在线</span></td><td class="mono">今天 13:40</td><td><span class="adm-op">禁用 · 重置</span></td></tr>
+                    <tr><td>瞭望员_a</td><td><span class="badge badge--muted">OPERATOR</span></td><td><span class="badge badge--low"><i class="badge__dot"></i>在线</span></td><td class="mono">今天 11:02</td><td><span class="adm-op">禁用 · 重置</span></td></tr>
+                    <tr><td>巡护_03</td><td><span class="badge badge--muted">VIEWER</span></td><td><span class="badge badge--muted">离线</span></td><td class="mono">昨天 18:27</td><td><span class="adm-op">启用 · 重置</span></td></tr>
+                    <tr><td>guest</td><td><span class="badge badge--muted">VIEWER</span></td><td><span class="badge badge--muted">离线</span></td><td class="mono">03-14 09:55</td><td><span class="adm-op">启用 · 删除</span></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- 模型接入 -->
+            <div class="kb-ans">
+              <div class="kb-ans__hd">
+                <span class="kb-ans__t">模型接入</span>
+                <span class="sq-panel__sp"></span>
+                <div class="seg">
+                  <button class="seg__i is-on">百炼</button>
+                  <button class="seg__i">AMD</button>
+                  <button class="seg__i">LongCat</button>
+                  <button class="seg__i">Ollama</button>
+                </div>
+              </div>
+              <div class="kb-ans__bd" style="gap:10px">
+                <div class="field"><span class="sq-parse__k" style="width:64px;flex:none">API Key</span><input type="password" value="sk-4f2a••••••••••••9d31"><span class="badge badge--low"><i class="badge__dot"></i>有效</span></div>
+                <div class="field"><span class="sq-parse__k" style="width:64px;flex:none">Base URL</span><input value="https://dashscope.aliyuncs.com/compatible-mode/v1"></div>
+                <div class="field"><span class="sq-parse__k" style="width:64px;flex:none">模型</span><input value="qwen-plus"><span class="field__suffix mono">temp 0.7</span></div>
+                <div class="kit-row" style="justify-content:space-between;margin-top:2px">
+                  <span class="badge"><i class="badge__dot" style="background:var(--fs-success)"></i>连接正常 · 延迟 420ms</span>
+                  <span style="display:inline-flex;gap:8px">
+                    <button class="btn btn--ghost" style="height:28px">测试连接</button>
+                    <button class="btn btn--primary" style="height:28px"><svg class="icon icon--sm"><use href="#i-arrow"/></svg>保存配置</button>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 运行日志 -->
+          <div class="kb-ans anim" style="--d:160ms">
+            <div class="kb-ans__hd">
+              <span class="kb-ans__t">运行日志</span>
+              <span class="badge badge--muted mono">30s 自动刷新</span>
+              <span class="sq-panel__sp"></span>
+              <button class="btn btn--ghost" style="height:26px"><svg class="icon icon--sm"><use href="#i-download"/></svg>导出</button>
+            </div>
+            <div class="adm-log mono">
+              <div><span class="t">13:51:02</span><span class="lv ok">INFO</span>QueryAgent 执行完成 · keyword 通道 · 31 rows · 0.4s</div>
+              <div><span class="t">13:50:47</span><span class="lv ok">INFO</span>RAG 流式回答结束 · 引用 5 片段 · tokens 1,284</div>
+              <div><span class="t">13:49:18</span><span class="lv warn">WARN</span>数据源后端心跳超时 1 次，已自动重连</div>
+              <div><span class="t">13:48:55</span><span class="lv ok">INFO</span>用户 瞭望员_a 登录成功 · 10.12.0.35</div>
+              <div><span class="t">13:46:30</span><span class="lv err">ERROR</span>视觉识别请求失败 · model qwen3-omni-flash · 重试成功</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 个人中心 ---------- -->
+    <section class="screen" data-screen="profile">
+      <header class="page-head anim" style="--d:0ms">
+        <div class="page-head__t">
+          <h1 class="page-head__h1">个人中心</h1>
+          <p class="page-head__sub">账号资料 · 安全设置 · 个性化偏好</p>
+        </div>
+        <div class="page-head__sp"></div>
+        <div class="page-head__ops">
+          <span class="badge badge--muted mono">ID 1001</span>
+          <span class="badge"><i class="badge__dot" style="background:var(--fs-success)"></i>会话有效</span>
+        </div>
+      </header>
+
+      <div class="sq-main">
+        <div class="col-scroll" style="gap:20px">
+          <!-- 账号卡 -->
+          <div class="pf-hero anim" style="--d:40ms">
+            <span class="pf-hero__avatar">值</span>
+            <div class="pf-hero__b">
+              <span class="pf-hero__n">值班员<span class="badge badge--accent" style="margin-left:10px">ADMIN</span></span>
+              <span class="pf-hero__m mono">最近登录 今天 13:40 · IP 10.12.0.8 · 会话 2h 14m</span>
+            </div>
+            <span class="sq-panel__sp"></span>
+            <button class="btn btn--ghost" style="height:28px"><svg class="icon icon--sm"><use href="#i-power"/></svg>退出登录</button>
+          </div>
+
+          <div class="adm-grid anim" style="--d:80ms">
+            <!-- 基本资料 -->
+            <div class="kb-ans">
+              <div class="kb-ans__hd"><span class="kb-ans__t">基本资料</span></div>
+              <div class="kb-ans__bd" style="gap:10px">
+                <div class="field"><span class="sq-parse__k" style="width:64px;flex:none">显示名</span><input value="值班员"></div>
+                <div class="field"><span class="sq-parse__k" style="width:64px;flex:none">邮箱</span><input value="duty@flamesentry.cn"><span class="badge badge--low"><i class="badge__dot"></i>已验证</span></div>
+                <div class="field"><span class="sq-parse__k" style="width:64px;flex:none">角色</span><input value="ADMIN" disabled></div>
+                <div class="kit-row" style="justify-content:flex-end;margin-top:2px">
+                  <button class="btn btn--primary" style="height:28px">保存修改</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 安全设置 -->
+            <div class="kb-ans">
+              <div class="kb-ans__hd"><span class="kb-ans__t">修改密码</span></div>
+              <div class="kb-ans__bd" style="gap:10px">
+                <div class="field"><span class="sq-parse__k" style="width:64px;flex:none">原密码</span><input type="password" placeholder="输入当前密码"></div>
+                <div class="field"><span class="sq-parse__k" style="width:64px;flex:none">新密码</span><input type="password" placeholder="至少 6 位"><span class="field__suffix">弱</span></div>
+                <div class="field"><span class="sq-parse__k" style="width:64px;flex:none">确认</span><input type="password" placeholder="再次输入新密码"></div>
+                <div class="kit-row" style="justify-content:space-between;margin-top:2px">
+                  <span class="kb-cite__p" style="display:block">修改成功后将强制重新登录</span>
+                  <button class="btn btn--primary" style="height:28px">更新密码</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 偏好设置 -->
+          <div class="kb-ans anim" style="--d:120ms">
+            <div class="kb-ans__hd"><span class="kb-ans__t">偏好设置</span></div>
+            <div class="kb-ans__bd" style="gap:0;padding:0">
+              <div class="pf-row">
+                <div class="pf-row__b"><span class="pf-row__t">界面主题</span><span class="pf-row__d">跟随系统或手动固定</span></div>
+                <div class="seg"><button class="seg__i is-on">浅色</button><button class="seg__i">深色</button><button class="seg__i">跟随系统</button></div>
+              </div>
+              <div class="pf-row">
+                <div class="pf-row__b"><span class="pf-row__t">语音播报</span><span class="pf-row__d">查询结果与识别结论自动朗读</span></div>
+                <span class="tg is-on"><i></i></span>
+              </div>
+              <div class="pf-row" style="border-bottom:none">
+                <div class="pf-row__b"><span class="pf-row__t">表格密度</span><span class="pf-row__d">结果表格的行高与留白</span></div>
+                <div class="seg"><button class="seg__i">紧凑</button><button class="seg__i is-on">舒适</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- Agent 协作中心 ---------- -->
+    <section class="screen" data-screen="agent">
+      <header class="page-head anim" style="--d:0ms">
+        <div class="page-head__t">
+          <h1 class="page-head__h1">Agent 协作中心</h1>
+          <p class="page-head__sub">多智能体编排 · 火险研判报告生成 · 人工审批闸口</p>
+        </div>
+        <div class="page-head__sp"></div>
+        <div class="page-head__ops">
+          <span class="badge badge--muted mono">能力 8/8</span>
+          <span class="badge badge--muted"><i class="badge__dot" style="background:var(--fs-success)"></i>SSE 已连接</span>
+          <button class="btn btn--ghost"><svg class="icon icon--sm"><use href="#i-refresh"/></svg>刷新</button>
+          <button class="btn btn--primary"><svg class="icon icon--sm"><use href="#i-plus"/></svg>新建任务</button>
+        </div>
+      </header>
+
+      <div class="agent-body">
+        <!-- 左：输入 + 历史 -->
+        <div class="agent-col agent-col--l">
+          <div class="col-scroll" style="gap:24px">
+            <div style="display:flex;flex-direction:column;gap:12px">
+              <span class="sec-t">任务输入</span>
+              <textarea class="textarea" rows="4" placeholder="描述研判需求，例如：分析楚雄州近 30 天火险趋势并生成值班简报">分析楚雄州近 30 天火险趋势并生成值班简报</textarea>
+              <div class="kit-row">
+                <span class="badge badge--muted">楚雄州火险趋势</span>
+                <span class="badge badge--muted">昆明市火点分布</span>
+                <span class="badge badge--muted">全省月度研判</span>
+              </div>
+              <div class="kit-row" style="justify-content:space-between">
+                <div class="field" style="width:160px">
+                  <input value="阿里百炼 · qwen-plus" readonly>
+                </div>
+                <button class="btn btn--primary" style="height:32px"><svg class="icon icon--sm"><use href="#i-arrow"/></svg>执行</button>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:12px">
+              <span class="sec-t">历史任务</span>
+              <div class="hist-item">
+                <span class="hist-item__t">分析楚雄州近 30 天火险趋势并生成值班简报</span>
+                <span class="hist-item__m"><span>15:38</span><span>已完成</span><span>6 步</span></span>
+              </div>
+              <div class="hist-item">
+                <span class="hist-item__t">昆明市 2025 年 Q2 火点频次统计</span>
+                <span class="hist-item__m"><span>14:02</span><span>已完成</span><span>6 步</span></span>
+              </div>
+              <div class="hist-item">
+                <span class="hist-item__t">普洱市夜间热异常核查报告</span>
+                <span class="hist-item__m"><span>11:47</span><span>已驳回</span><span>4 步</span></span>
+              </div>
+              <div class="hist-item">
+                <span class="hist-item__t">丽江市烟羽扩散影响评估</span>
+                <span class="hist-item__m"><span>昨日</span><span>已完成</span><span>6 步</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 中：时间轴 + 报告流 -->
+        <div class="agent-col agent-col--c">
+          <div class="col-scroll" style="gap:28px">
+            <div style="display:flex;flex-direction:column;gap:12px">
+              <span class="sec-t">执行流水线</span>
+              <div class="timeline">
+                <div class="tl-step tl-step--done">
+                  <div class="tl-step__rail"><span class="tl-step__dot"><svg class="icon" style="width:11px;height:11px"><use href="#i-check"/></svg></span><span class="tl-step__line"></span></div>
+                  <div class="tl-step__body"><div class="tl-step__t">意图解析</div><div class="tl-step__d">QueryAgent · 识别为「趋势研判」，抽取州市=楚雄、窗口=30 天</div></div>
+                </div>
+                <div class="tl-step tl-step--done">
+                  <div class="tl-step__rail"><span class="tl-step__dot"><svg class="icon" style="width:11px;height:11px"><use href="#i-check"/></svg></span><span class="tl-step__line"></span></div>
+                  <div class="tl-step__body"><div class="tl-step__t">数据检索</div><div class="tl-step__d">DataAgent · 命中历史火点 412 条、逐日预测 30 条</div></div>
+                </div>
+                <div class="tl-step tl-step--done">
+                  <div class="tl-step__rail"><span class="tl-step__dot"><svg class="icon" style="width:11px;height:11px"><use href="#i-check"/></svg></span><span class="tl-step__line"></span></div>
+                  <div class="tl-step__body"><div class="tl-step__t">知识检索</div><div class="tl-step__d">RagAgent · 召回 5 段防火条例与 3 份历史简报</div></div>
+                </div>
+                <div class="tl-step tl-step--run">
+                  <div class="tl-step__rail"><span class="tl-step__dot">4</span><span class="tl-step__line"></span></div>
+                  <div class="tl-step__body"><div class="tl-step__t">报告生成</div><div class="tl-step__d">ReportAgent · 正在流式输出正文…</div></div>
+                </div>
+                <div class="tl-step tl-step--wait">
+                  <div class="tl-step__rail"><span class="tl-step__dot">5</span><span class="tl-step__line"></span></div>
+                  <div class="tl-step__body"><div class="tl-step__t">人工审批</div><div class="tl-step__d">HITL 闸口 · 等待值班员确认</div></div>
+                </div>
+                <div class="tl-step tl-step--wait">
+                  <div class="tl-step__rail"><span class="tl-step__dot">6</span><span class="tl-step__line"></span></div>
+                  <div class="tl-step__body"><div class="tl-step__t">结果归档</div><div class="tl-step__d">写入报告中心并同步简报</div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="report-stream">
+              <div class="report-stream__hd">
+                <h3>楚雄州火险研判简报</h3>
+                <span class="report-stream__sp"></span>
+                <span class="badge badge--accent">流式生成中</span>
+                <span class="badge badge--muted mono">1,284 字</span>
+              </div>
+              <div class="stream-body" id="streamBody"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右：审批与元信息 -->
+        <div class="agent-col agent-col--r">
+          <div class="col-scroll" style="gap:24px">
+            <div style="display:flex;flex-direction:column;gap:12px">
+              <span class="sec-t">任务元信息</span>
+              <div class="meta-list">
+                <div class="meta-list__r"><span class="meta-list__k">任务 ID</span><span class="meta-list__v mono">T-20261101-0438</span></div>
+                <div class="meta-list__r"><span class="meta-list__k">状态</span><span class="meta-list__v">报告生成中</span></div>
+                <div class="meta-list__r"><span class="meta-list__k">模型</span><span class="meta-list__v">qwen-plus</span></div>
+                <div class="meta-list__r"><span class="meta-list__k">已用时</span><span class="meta-list__v mono">00:42</span></div>
+                <div class="meta-list__r"><span class="meta-list__k">Token</span><span class="meta-list__v mono">6,182</span></div>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:12px">
+              <span class="sec-t">人工审批</span>
+              <div class="review">
+                <div class="review__hd">
+                  <svg class="icon icon--sm" style="color:var(--fs-accent)"><use href="#i-edit"/></svg>
+                  <h3>草稿审阅</h3>
+                  <span class="rail-head__sp"></span>
+                  <span class="badge badge--muted">待闸口触发</span>
+                </div>
+                <div class="review__bd">
+                  <p class="review__note">报告生成完成后将在此处暂停，值班员可直接在草稿上修订，再选择通过、修订后通过或驳回重写。</p>
+                  <div class="review__ops">
+                    <button class="btn btn--primary" style="height:28px"><svg class="icon icon--sm"><use href="#i-check"/></svg>通过</button>
+                    <button class="btn" style="height:28px"><svg class="icon icon--sm"><use href="#i-edit"/></svg>修订后通过</button>
+                    <button class="btn btn--danger" style="height:28px"><svg class="icon icon--sm"><use href="#i-close"/></svg>驳回</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:12px">
+              <span class="sec-t">检索来源</span>
+              <div class="hist-item"><span class="hist-item__t" style="-webkit-line-clamp:1">《云南省森林防火条例》第三章</span><span class="hist-item__m"><span>相关度 0.88</span></span></div>
+              <div class="hist-item"><span class="hist-item__t" style="-webkit-line-clamp:1">楚雄州 2025 年春季火险研判简报</span><span class="hist-item__m"><span>相关度 0.81</span></span></div>
+              <div class="hist-item"><span class="hist-item__t" style="-webkit-line-clamp:1">NASA FIRMS 火点数据处理规范</span><span class="hist-item__m"><span>相关度 0.74</span></span></div>
+            </div>
+
+            <!-- 系统能力（原 SystemCapabilities：8 组运行时状态折叠区） -->
+            <div style="display:flex;flex-direction:column;gap:12px">
+              <span class="sec-t">系统能力<span class="kb-n">8</span></span>
+              <div class="cap">
+                <div class="cap-sum">
+                  <span class="badge"><i class="badge__dot" style="background:var(--fs-success)"></i>全部正常</span>
+                  <span class="cap-sum__sp"></span>
+                  <span class="cap-sum__m">快照 15:38 · 熔断 0/3</span>
+                </div>
+                <div class="meta-list">
+                  <div class="meta-list__r"><span class="meta-list__k">大模型</span><span class="meta-list__v">qwen-plus<span class="cap-chain"><span class="cap-chip">百炼</span><span class="cap-chip">AMD</span><span class="cap-chip">LongCat</span></span></span></div>
+                  <div class="meta-list__r"><span class="meta-list__k">熔断器</span><span class="meta-list__v"><span class="cap-dots"><i class="is-ok"></i><i class="is-ok"></i><i class="is-warn"></i></span>LongCat 半开 · 冷却 42s</span></div>
+                  <div class="meta-list__r"><span class="meta-list__k">检查点</span><span class="meta-list__v">Redis 持久化 · 断点可续跑</span></div>
+                  <div class="meta-list__r"><span class="meta-list__k">编排</span><span class="meta-list__v">SSE 流式 · HITL 审批闸口</span></div>
+                  <div class="meta-list__r"><span class="meta-list__k">数据源</span><span class="meta-list__v mono">2 表已连接 · 5,411 + 1,286 行</span></div>
+                  <div class="meta-list__r"><span class="meta-list__k">RAG</span><span class="meta-list__v">向量 + 关键词 · <span class="mono">1,286 chunks</span></span></div>
+                  <div class="meta-list__r"><span class="meta-list__k">MCP 工具</span><span class="meta-list__v">2 servers · 7 tools</span></div>
+                  <div class="meta-list__r"><span class="meta-list__k">评估 / 降级</span><span class="meta-list__v">最近回归通过 · LLM→规则兜底就绪</span></div>
+                </div>
+                <button class="btn btn--ghost" style="height:26px"><svg class="icon icon--sm"><use href="#i-refresh"/></svg>刷新能力快照</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 报告中心 ---------- -->
+    <section class="screen" data-screen="report">
+      <header class="page-head anim" style="--d:0ms">
+        <div class="page-head__t">
+          <h1 class="page-head__h1">报告中心</h1>
+          <p class="page-head__sub">火险研判报告 · 值班简报 · Agent 生成归档</p>
+        </div>
+        <div class="page-head__sp"></div>
+        <div class="page-head__ops">
+          <div class="field" style="width:200px"><svg class="icon icon--sm" style="color:var(--fs-ink-400)"><use href="#i-search"/></svg><input placeholder="搜索报告标题"></div>
+          <div class="seg">
+            <button class="seg__i is-on">全部</button>
+            <button class="seg__i">Agent</button>
+            <button class="seg__i">人工</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="rep-body">
+        <aside class="rep-list">
+          <div class="rep-list__hd">
+            <span class="sec-t">报告列表</span>
+            <span class="rep-list__sp"></span>
+            <span class="badge badge--muted">42</span>
+          </div>
+          <div class="rep-list__bd">
+            <div class="rep-item is-on">
+              <span class="rep-item__t">楚雄州近 30 天火险趋势研判简报</span>
+              <span class="rep-item__m"><span class="badge badge--accent">Agent</span><span class="badge badge--muted">阿里百炼</span><span>11-01 15:38</span></span>
+            </div>
+            <div class="rep-item">
+              <span class="rep-item__t">昆明市 2025 年 Q2 火点频次统计报告</span>
+              <span class="rep-item__m"><span class="badge badge--accent">Agent</span><span class="badge badge--muted">本地 Ollama</span><span>11-01 14:02</span></span>
+            </div>
+            <div class="rep-item">
+              <span class="rep-item__t">云南省春季森林防火工作要点</span>
+              <span class="rep-item__m"><span class="badge badge--muted">人工上传</span><span>10-28 09:14</span></span>
+            </div>
+            <div class="rep-item">
+              <span class="rep-item__t">普洱市夜间热异常核查报告</span>
+              <span class="rep-item__m"><span class="badge badge--accent">Agent</span><span class="badge badge--muted">AMD GPU</span><span>10-27 11:47</span></span>
+            </div>
+            <div class="rep-item">
+              <span class="rep-item__t">丽江市烟羽扩散影响评估</span>
+              <span class="rep-item__m"><span class="badge badge--accent">Agent</span><span class="badge badge--muted">阿里百炼</span><span>10-26 16:20</span></span>
+            </div>
+          </div>
+        </aside>
+
+        <div class="rep-detail">
+          <div class="rep-bar">
+            <span class="rep-bar__t">楚雄州近 30 天火险趋势研判简报</span>
+            <span class="rep-bar__sp"></span>
+            <button class="btn btn--ghost"><svg class="icon icon--sm"><use href="#i-sound"/></svg>播报</button>
+            <button class="btn"><svg class="icon icon--sm"><use href="#i-download"/></svg>导出</button>
+            <button class="btn"><svg class="icon icon--sm"><use href="#i-print"/></svg>打印</button>
+            <button class="btn btn--ghost btn--danger"><svg class="icon icon--sm"><use href="#i-trash"/></svg></button>
+          </div>
+
+          <div class="rep-scroll">
+            <article class="rep-paper anim" style="--d:80ms">
+              <h1 class="rep-title">楚雄州近 30 天火险趋势研判简报</h1>
+              <div class="rep-meta">
+                <span>生成时间 2026-11-01 15:38</span>
+                <span>Agent 生成 · 阿里百炼</span>
+                <span>正文 3,182 字</span>
+              </div>
+
+              <div class="paper">
+                <h2>一、总体研判</h2>
+                <p>2026 年 10 月 1 日至 10 月 30 日期间，楚雄彝族自治州累计监测到火点 <strong>412 处</strong>，较上月同期上升 18.6%，火险综合指数由 0.42 升至 <strong>0.58</strong>，整体处于<strong>较高</strong>风险区间。主导因素为阶段性干旱与农林交错带人为用火叠加。</p>
+                <p>从空间分布看，火点高度集中于<strong>元谋、永仁、大姚</strong>三县，合计占全州火点总数的 <strong>63.4%</strong>，与干热河谷地貌高度重合。</p>
+
+                <blockquote>研判结论：未来 7 天楚雄州火险等级维持「高」，建议对元谋、永仁两县实施重点巡护。</blockquote>
+
+                <h2>二、州市火险指数分布</h2>
+                <table>
+                  <thead>
+                    <tr><th>州市</th><th class="num">火点数</th><th class="num">火险指数</th><th>等级</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>楚雄州</td><td class="num">412</td><td class="num">0.58</td><td>高</td></tr>
+                    <tr><td>昆明市</td><td class="num">286</td><td class="num">0.44</td><td>中</td></tr>
+                    <tr><td>普洱市</td><td class="num">231</td><td class="num">0.39</td><td>中</td></tr>
+                    <tr><td>大理州</td><td class="num">174</td><td class="num">0.31</td><td>中</td></tr>
+                    <tr><td>丽江市</td><td class="num">96</td><td class="num">0.22</td><td>低</td></tr>
+                  </tbody>
+                </table>
+
+                <h2>三、成因分析</h2>
+                <p>其一，10 月以来楚雄州降水较常年同期偏少 <strong>42%</strong>，元谋、永仁一带连续无有效降水日数达 <strong>26 天</strong>，可燃物含水率显著下降。</p>
+                <p>其二，遥感影像解译显示农林交错带存在连片农事用火痕迹，其中 <strong>12 处</strong>经 AI 火情识别复核为高置信度疑似火点。</p>
+
+                <h3>3.1 重点关注区域</h3>
+                <ul>
+                  <li>元谋县黄瓜园镇 — 干热河谷，植被以稀树灌木草丛为主</li>
+                  <li>永仁县永定镇 — 与四川攀枝花交界，跨省火情蔓延风险</li>
+                  <li>大姚县石羊镇 — 林区道路密度低，扑救可达性差</li>
+                </ul>
+
+                <h2>四、处置建议</h2>
+                <p>建议将上述三县列为 11 月重点巡护区域，加密卫星与无人机巡查频次；同步在农林交错带开展用火管控宣传，并对永仁县跨省边界建立联防通报机制。</p>
+                <p style="color:var(--fs-ink-400);font-size:12px">— 本简报由多智能体协作生成，已经人工审批归档，数据截至 2026-10-30 24:00。示例内容。</p>
+              </div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 登录（D10：BlankLayout，无侧栏） ---------- -->
+    <section class="screen" data-screen="login">
+      <div class="login">
+        <div class="login-vis">
+          <div class="login-vis__bg" id="loginBg"></div>
+          <div class="login-vis__top">
+            <div class="login-vis__mark">焰哨</div>
+            <div class="login-vis__en">FLAME SENTRY · WILDFIRE INTELLIGENCE</div>
+          </div>
+          <div class="login-vis__bottom">
+            <p class="login-vis__claim">在火情发生之前，<br>把风险看清楚。</p>
+            <p class="login-vis__desc">融合卫星火点、气象要素与地形数据，由多智能体协同完成火险研判、值班简报与归档发布的全链路闭环。</p>
+            <div class="login-vis__stats">
+              <div><div class="lv-stat__v">16</div><div class="lv-stat__k">州市覆盖</div></div>
+              <div><div class="lv-stat__v">4.2<span style="font-size:12px">万</span></div><div class="lv-stat__k">历史火点</div></div>
+              <div><div class="lv-stat__v">6</div><div class="lv-stat__k">协作智能体</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="login-form">
+          <div class="login-card">
+            <div class="login-card__hd">
+              <h1>登录焰哨</h1>
+              <p>使用值班账号进入指挥平台</p>
+            </div>
+            <div class="login-fields">
+              <div>
+                <label class="lb">用户名</label>
+                <div class="field"><input value="duty_operator"></div>
+              </div>
+              <div>
+                <label class="lb">密码</label>
+                <div class="field is-focus"><input type="password" value="••••••••"></div>
+              </div>
+            </div>
+            <div class="login-card__err"><svg class="icon icon--sm"><use href="#i-alert"/></svg>用户名或密码错误</div>
+            <button class="btn btn--primary" style="height:36px;justify-content:center">登录</button>
+            <div class="login-card__foot">
+              <span>还没有账号？<a href="#">申请开通</a></span>
+              <span>v2.0</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 组件样例 ---------- -->
+    <section class="screen" data-screen="kit">
+      <header class="page-head">
+        <div class="page-head__t">
+          <h1 class="page-head__h1">组件样例</h1>
+          <p class="page-head__sub">按钮 / 输入 / 徽标 / 表格 / 状态 · 全部取自同一套令牌</p>
+        </div>
+        <div class="page-head__sp"></div>
+        <div class="page-head__ops"><span class="badge badge--muted">§10.5 组件视觉规范</span></div>
+      </header>
+      <div class="kit">
+        <div class="kit-grid">
+          <div class="panel kit-card">
+            <span class="sec-t">按钮</span>
+            <div class="kit-row">
+              <button class="btn btn--primary">主要操作</button>
+              <button class="btn">次要操作</button>
+              <button class="btn btn--ghost">文字按钮</button>
+              <button class="btn" disabled>禁用</button>
+            </div>
+            <div class="kit-row">
+              <button class="btn"><svg class="icon icon--sm"><use href="#i-download"/></svg>导出</button>
+              <button class="btn btn--danger"><svg class="icon icon--sm"><use href="#i-trash"/></svg>删除</button>
+            </div>
+            <div class="seg">
+              <button class="seg__i is-on">历史火点</button>
+              <button class="seg__i">预测火险</button>
+            </div>
+          </div>
+
+          <div class="panel kit-card">
+            <span class="sec-t">输入</span>
+            <div class="field"><svg class="icon icon--sm" style="color:var(--fs-ink-400)"><use href="#i-search"/></svg><input placeholder="搜索州市 / 火点编号"></div>
+            <div class="field is-focus"><input value="聚焦态：边框转强调色，不加发光环"><span class="field__suffix">⏎</span></div>
+            <textarea class="textarea" rows="3" placeholder="多行输入，行高 1.7，圆角 6"></textarea>
+          </div>
+
+          <div class="panel kit-card">
+            <span class="sec-t">徽标 · 状态</span>
+            <div class="kit-row">
+              <span class="badge badge--low"><i class="badge__dot"></i>低</span>
+              <span class="badge badge--mid"><i class="badge__dot"></i>中</span>
+              <span class="badge badge--high"><i class="badge__dot"></i>高</span>
+              <span class="badge badge--extreme"><i class="badge__dot"></i>极高</span>
+            </div>
+            <div class="kit-row">
+              <span class="badge badge--accent">Agent 生成</span>
+              <span class="badge badge--muted">人工上传</span>
+              <span class="badge"><i class="badge__dot" style="background:var(--fs-success)"></i>SSE 已连接</span>
+            </div>
+            <div class="kit-row" style="flex-direction:column;align-items:stretch;gap:8px">
+              <div class="toast toast--ok"><svg class="icon icon--sm"><use href="#i-check"/></svg>报告已导出</div>
+              <div class="toast toast--warn"><svg class="icon icon--sm"><use href="#i-alert"/></svg>报告已生成，等待人工审批</div>
+              <div class="toast toast--err"><svg class="icon icon--sm"><use href="#i-close"/></svg>任务执行失败</div>
+            </div>
+          </div>
+
+          <div class="panel kit-card kit-card--half">
+            <span class="sec-t">表格（无外框 · 仅行间发丝线 · 数字右对齐等宽）</span>
+            <table class="tbl">
+              <thead><tr><th>州市</th><th>等级</th><th class="num">火点数</th><th class="num">火险指数</th><th class="num">更新时间</th></tr></thead>
+              <tbody>
+                <tr><td>楚雄州</td><td><span class="badge badge--high"><i class="badge__dot"></i>高</span></td><td class="num">412</td><td class="num">0.58</td><td class="num">15:38</td></tr>
+                <tr><td>昆明市</td><td><span class="badge badge--mid"><i class="badge__dot"></i>中</span></td><td class="num">286</td><td class="num">0.44</td><td class="num">15:36</td></tr>
+                <tr><td>普洱市</td><td><span class="badge badge--mid"><i class="badge__dot"></i>中</span></td><td class="num">231</td><td class="num">0.39</td><td class="num">15:31</td></tr>
+                <tr><td>丽江市</td><td><span class="badge badge--low"><i class="badge__dot"></i>低</span></td><td class="num">96</td><td class="num">0.22</td><td class="num">15:12</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="panel kit-card">
+            <span class="sec-t">空态</span>
+            <div class="empty">
+              <svg class="icon" style="color:var(--fs-ink-400)"><use href="#i-file"/></svg>
+              暂无报告
+              <span class="empty__hint">执行一个 Agent 任务后，报告会自动归档到这里</span>
+              <button class="btn" style="height:28px">新建任务</button>
+            </div>
+          </div>
+          <div class="panel kit-card">
+            <span class="sec-t">加载态（骨架 + 细环）</span>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div class="skel" style="height:12px;width:80%"></div>
+              <div class="skel" style="height:12px;width:62%"></div>
+              <div class="skel" style="height:12px;width:71%"></div>
+            </div>
+            <div class="kit-row" style="margin-top:12px">
+              <span class="badge badge--muted"><svg class="icon icon--sm" style="animation:spin 1s linear infinite"><use href="#i-refresh"/></svg>同步中</span>
+            </div>
+          </div>
+          <div class="panel kit-card">
+            <span class="sec-t">KPI 排版</span>
+            <div style="display:flex;flex-direction:column;gap:2px">
+              <span class="kpi__lb" style="font-size:10px;letter-spacing:.08em;color:var(--fs-ink-500)">当前火点</span>
+              <span class="num" style="font-size:38px;font-weight:600;letter-spacing:-.02em;line-height:1.1">1,284</span>
+            </div>
+            <div style="display:flex;gap:20px;margin-top:16px">
+              <div><div class="num" style="font-size:22px;font-weight:600">4</div><div style="font-size:10px;letter-spacing:.06em;color:var(--fs-ink-400)">高风险州市</div></div>
+              <div><div class="num" style="font-size:22px;font-weight:600">31%</div><div style="font-size:10px;letter-spacing:.06em;color:var(--fs-ink-400)">平均湿度</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div><!-- /main -->
+</div><!-- /app -->
+</div><!-- /stage -->
+</div>
+
+<button class="tweaks-fab" id="tweaksFab">Tweaks</button>
+<aside class="tweaks" id="tweaksPanel">
+  <div class="tweaks__hd"><h4>Tweaks</h4><span class="tweaks__sp"></span><button class="icon-btn" id="tweaksClose"><svg class="icon icon--sm"><use href="#i-close"/></svg></button></div>
+  <div class="tw-row"><span class="tw-row__k">主题</span><div class="tw-opts" data-key="theme">
+    <button class="tw-opt" data-val="light">浅色 石英</button><button class="tw-opt is-on" data-val="dark">深色 夜航</button>
+  </div></div>
+  <div class="tw-row"><span class="tw-row__k">强调色</span><div class="tw-opts" data-key="accent">
+    <button class="tw-opt is-on" data-val="ember">火烬</button><button class="tw-opt" data-val="ochre">赭石</button><button class="tw-opt" data-val="brass">铜绿</button><button class="tw-opt" data-val="legacy">冷紫（对照）</button>
+  </div></div>
+  <div class="tw-row"><span class="tw-row__k">报告正文字体（D7）</span><div class="tw-opts" data-key="serif">
+    <button class="tw-opt is-on" data-val="on">宋体</button><button class="tw-opt" data-val="off">黑体</button>
+  </div></div>
+  <div class="tw-row"><span class="tw-row__k">侧栏宽度（D8）</span><div class="tw-opts" data-key="sidebar">
+    <button class="tw-opt is-on" data-val="expand">72px</button><button class="tw-opt" data-val="collapse">48px</button>
+  </div></div>
+  <div class="tw-row"><span class="tw-row__k">大屏图表（D9）</span><div class="tw-opts" data-key="charts">
+    <button class="tw-opt is-on" data-val="two">两块 tab</button><button class="tw-opt" data-val="four">四块并排</button>
+  </div></div>
+  <div class="tw-row"><span class="tw-row__k">圆角</span><div class="tw-opts" data-key="radius">
+    <button class="tw-opt is-on" data-val="normal">标准</button><button class="tw-opt" data-val="compact">紧凑</button>
+  </div></div>
+  <div class="tw-row"><span class="tw-row__k">信息密度</span><div class="tw-opts" data-key="density">
+    <button class="tw-opt is-on" data-val="normal">舒适</button><button class="tw-opt" data-val="compact">紧凑</button>
+  </div></div>
+  <div class="tw-row"><span class="tw-row__k">动效</span><div class="tw-opts" data-key="motion">
+    <button class="tw-opt is-on" data-val="on">开</button><button class="tw-opt" data-val="off">关（静态）</button>
+  </div></div>
+  <p class="tweaks__note">本面板仅存在于原型，不会进入产品。所有取值都来自同一套 --fs-* 令牌。</p>
+</aside>
+
+<script src="visual-v0.js"></script>
+</body>
+</html>

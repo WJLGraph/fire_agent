@@ -21,7 +21,10 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     ports:
-      - "5432:5432"
+      # 只绑回环：容器内 backend 通过 service 名 db:5432 访问，不需要对外发布；
+      # 写成 "5432:5432" 会把口令为 postgres 的库直接暴露到服务器所有网卡。
+      # 留回环映射是为了本机 Navicat / psql 排障仍然可用。
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d fire_agent"]
       interval: 5s
@@ -39,7 +42,9 @@ services:
     volumes:
       - backend-data:/app/data   # 知识库上传 / 视觉图片持久化
     ports:
-      - "8000:8000"
+      # 对外只应经前端 Nginx（它反代 /api 到 backend:8000）。发布到 0.0.0.0 相当于
+      # 旁路掉反代层的 limit_req / TLS / 头策略，还让 8000 成为可直接扫描的入口。
+      - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy

@@ -23,10 +23,20 @@ class Settings(BaseSettings):
         "> - GitHub 仓库：https://github.com/wjl-cong/fire_agent (⭐ Star welcome!)\n"
     )
 
-    # JWT 认证（由 .env 提供，避免硬编码）
-    JWT_SECRET: str = "fire-agent-platform-secret-key-change-in-prod"
+    # 运行环境：development（默认，保持向后兼容） / production
+    # production 下强制校验 JWT_SECRET、关闭 API 文档路由
+    ENV: str = "development"
+
+    # JWT 认证（生产必须由 .env 提供强随机值；默认空 = 起不来，避免全网共享同一把签名密钥）
+    JWT_SECRET: str = ""
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 小时
+    # 会话空闲上限：15 小时。滑动续期由 app.core.session 中间件负责——
+    # 期间任意一次请求都会重新签发同 payload 的新 token（exp 再往后推 15h），
+    # 因此「连续 15h 无任何请求」才会真正过期。
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15 * 60
+
+    # 种子管理员初始口令（留空则生产环境不创建 admin，避免弱口令常驻）
+    ADMIN_INIT_PASSWORD: str = ""
 
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:4173"]
@@ -44,12 +54,17 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_API_BASE: str = ""
     LLM_MODEL: str = "qwen-plus"
-    EMBEDDING_MODEL: str = "text-embedding-v3"
-    # 视觉 / 语音模型（视觉可切换 aliyun/amd，语音恒定阿里百炼）
+    EMBEDDING_MODEL: str = "qwen3.7-text-embedding-flash"
+    # 视觉 / 语音模型（视觉、语音均可切换 aliyun/amd）
     VISION_PROVIDER: str = "aliyun"
     VISION_MODEL: str = "qwen-vl-plus"
     ASR_MODEL: str = "qwen3-asr-flash"
+    TTS_PROVIDER: str = "aliyun"  # aliyun | amd
     TTS_MODEL: str = "qwen3-tts-flash"
+
+    # 文档识别 OCR（PaddleOCR → MinerU2.5-Pro 云端增强（amd）→ RapidOCR 最后兜底）
+    OCR_PROVIDER: str = "local"
+    OCR_MODEL: str = "MinerU2.5-Pro"
 
     # 模型 API — AMD GPU Cloud（兼容 OpenAI 格式）
     AMD_API_KEY: str = ""
@@ -77,7 +92,7 @@ class Settings(BaseSettings):
 
     # Rerank 精排（阿里 DashScope text-rerank，使用 LLM_API_KEY；失败自动降级 RRF 融合原序）
     RERANK_ENABLED: bool = True
-    RERANK_MODEL: str = "qwen3-rerank"
+    RERANK_MODEL: str = "qwen3.7-text-rerank"
 
     # Agent 高级参数（P1）
     AGENT_REQUIRE_APPROVAL: bool = True  # 报告生成后需人工审批（HITL）才定稿

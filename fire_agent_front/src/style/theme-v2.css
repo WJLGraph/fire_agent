@@ -1,0 +1,572 @@
+/**
+ * =============================================================================
+ * 焰哨 FlameSentry · 视觉体系 v2（theme-v2）
+ *
+ * 设计锚点：Editorial Minimal（克制与留白）× Modern Tool（发丝线与单一强调）
+ *          × 少量「火」语义色。
+ * 明确不是：cyber 霓虹 / 玻璃拟态 / 渐变发光 / 金属质感。
+ *
+ * ---------------------------------------------------------------------------
+ * 生效方式：由 stores/theme.js 在 <html> 上加 `theme-v2` class 开启。
+ *   关闭方式：localStorage.setItem('fire_agent_theme_v2', 'off') 后刷新。
+ *   未开启时本文件所有规则不生效，视觉完全回到 gis-theme.css（可一键回退）。
+ *
+ * ---------------------------------------------------------------------------
+ * 本文件职责（V1 令牌与内核）：
+ *   1. 定义 --fs-* 新令牌（浅「石英 Quartz」/ 深「夜航 Nightwatch」）
+ *   2. 把旧 --gis-* 令牌重定向到 --fs-*（装饰层一律删除，不保留）
+ *   3. 重映射 Element Plus 的 --el-*
+ *   4. 全局元素级去装饰（玻璃 / 发光 / 金属字）
+ *
+ * 不在本文件做的事（后续 V 步骤）：
+ *   - 页面私有样式换肤（V2 壳层 / V3 大屏 / V4 业务页 / V5 登录）
+ *   - 图表顶刊化（V3）
+ * ---------------------------------------------------------------------------
+ * 注意：--gis-surface-1/2/3 与 --gis-ink* 是当前业务页那套「与主题无关的深色
+ *       快照」，V1 保持原值不动，等 V4 逐个页面迁到 --fs-* 后再删除。
+ * ========================================================================== */
+
+/* ==================== 1. 新令牌：浅色「石英 Quartz」 ==================== */
+
+html {
+    /* —— 表面 —— */
+    --fs-bg-canvas: #f4f4f2;      /* 页面底：暖纸白，去蓝调 */
+    --fs-bg-surface: #ffffff;     /* 卡片 / 面板 / 顶栏 / 侧栏 */
+    --fs-bg-sunken: #ededea;      /* 表头 / 代码块 / 输入轨道 / 草稿区 */
+    --fs-bg-raised: #ffffff;      /* 浮层 / 抽屉 / 对话框 */
+
+    /* —— 文字 —— */
+    --fs-ink-900: #17181a;        /* 主文字 / 标题 */
+    --fs-ink-700: #3d4045;        /* 正文 */
+    --fs-ink-500: #6e7178;        /* 次要 / 轴标签 */
+    --fs-ink-400: #9a9da3;        /* 占位 / 禁用 */
+
+    /* —— 发丝线（默认分隔手段） —— */
+    --fs-hairline: rgba(23, 24, 26, 0.10);
+    --fs-hairline-strong: rgba(23, 24, 26, 0.18);
+
+    /* —— 强调色：ember 火烬（语义化，替代旧冷紫 #5e6ad2） —— */
+    --fs-accent: #a8451f;
+    --fs-accent-hover: #8f381a;
+    --fs-accent-soft: rgba(168, 69, 31, 0.10);
+    --fs-on-accent: #ffffff;
+
+    /* —— 阴影：只有 3 级，禁止彩色发光 —— */
+    --fs-e1: 0 1px 2px rgba(16, 18, 20, 0.06);
+    --fs-e2: 0 2px 8px rgba(16, 18, 20, 0.08);
+    --fs-e3: 0 8px 28px rgba(16, 18, 20, 0.12);
+
+    /* —— 遮罩 —— */
+    --fs-mask: rgba(16, 18, 20, 0.45);
+
+    /* —— 火险通用状态语义（低/中/高/极端，非五级口径；五级数据色带见下方 --fs-risk-1..5） —— */
+    --fs-risk-low: #5f8577;
+    --fs-risk-mid: #b38a3c;
+    --fs-risk-high: #c0572b;
+    --fs-risk-extreme: #8e2f2a;
+
+    /* —— 火险数据五色（与 utils/riskLevel.js RISK_COLORS 严格一致） —— */
+    --fs-risk-1: #6e9a87;
+    --fs-risk-2: #a8a85a;
+    --fs-risk-3: #c99a3e;
+    --fs-risk-4: #d2663a;
+    --fs-risk-5: #a8352e;
+    --fs-risk-1-rgb: 110, 154, 135;
+    --fs-risk-2-rgb: 168, 168, 90;
+    --fs-risk-3-rgb: 201, 154, 62;
+    --fs-risk-4-rgb: 210, 102, 58;
+    --fs-risk-5-rgb: 168, 53, 46;
+
+    /* —— 状态色 —— */
+    --fs-success: #4f7a63;
+    --fs-warning: #b38a3c;
+    --fs-danger: #8e2f2a;
+    --fs-info: #5f7c8a;
+
+    /* —— 字体：不加载中文 Web 字体，走系统栈 —— */
+    --fs-font-sans: "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei",
+        system-ui, -apple-system, "Segoe UI", sans-serif;
+    --fs-font-serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC",
+        "SimSun", Georgia, serif;   /* 报告正文（D7 纸张化） */
+    --fs-font-mono: "IBM Plex Mono", "JetBrains Mono", ui-monospace,
+        SFMono-Regular, Menlo, Consolas, monospace;
+
+    /* —— 字号节奏 —— */
+    --fs-t-h1: 28px;
+    --fs-t-h2: 20px;
+    --fs-t-h3: 16px;
+    --fs-t-body: 14px;
+    --fs-t-meta: 12px;
+
+    /* —— 间距：4px 基准 —— */
+    --fs-s1: 4px;  --fs-s2: 8px;  --fs-s3: 12px; --fs-s4: 16px;
+    --fs-s5: 20px; --fs-s6: 24px; --fs-s8: 32px; --fs-s12: 48px;
+
+    /* —— 圆角：上限 14 —— */
+    --fs-r-xs: 3px;
+    --fs-r-sm: 6px;
+    --fs-r-md: 10px;
+    --fs-r-lg: 14px;
+
+    /* —— 尺寸 —— */
+    --fs-sidebar-w: 72px;
+    --fs-topbar-h: 64px;
+    --fs-control-h: 32px;
+    --fs-row-h: 40px;
+
+    /* —— 动效 —— */
+    --fs-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --fs-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --fs-dur-micro: 160ms;
+    --fs-dur-panel: 280ms;
+
+    /* —— RGB 三元组（供 rgba(var(--x-rgb), .4) 复用） —— */
+    --fs-bg-canvas-rgb: 244, 244, 242;
+    --fs-bg-surface-rgb: 255, 255, 255;
+    --fs-bg-sunken-rgb: 237, 237, 234;
+    --fs-ink-900-rgb: 23, 24, 26;
+    --fs-ink-700-rgb: 61, 64, 69;
+    --fs-ink-500-rgb: 110, 113, 120;
+    --fs-ink-400-rgb: 154, 157, 163;
+    --fs-accent-rgb: 168, 69, 31;
+    --fs-scrim-rgb: 16, 18, 20;
+}
+
+/* ==================== 新令牌：深色「夜航 Nightwatch」 ==================== */
+
+html.dark {
+    --fs-bg-canvas: #101214;
+    --fs-bg-surface: #171a1d;
+    --fs-bg-sunken: #0b0c0e;
+    --fs-bg-raised: #1c1f23;
+
+    --fs-ink-900: #e8e9ea;
+    --fs-ink-700: #b6b9bd;
+    --fs-ink-500: #878b90;
+    --fs-ink-400: #7c8188;        /* 暗色下占位/图标需保持可辨（原 #5f646a 过暗看不清） */
+
+    --fs-hairline: rgba(232, 233, 234, 0.10);
+    --fs-hairline-strong: rgba(232, 233, 234, 0.18);
+
+    --fs-accent: #e07a4a;
+    --fs-accent-hover: #ec8f62;
+    --fs-accent-soft: rgba(224, 122, 74, 0.14);
+    --fs-on-accent: #17181a;
+
+    --fs-e1: 0 1px 2px rgba(0, 0, 0, 0.40);
+    --fs-e2: 0 2px 8px rgba(0, 0, 0, 0.45);
+    --fs-e3: 0 8px 28px rgba(0, 0, 0, 0.55);
+
+    --fs-mask: rgba(0, 0, 0, 0.62);
+
+    --fs-risk-low: #7fa896;
+    --fs-risk-mid: #c9a24e;
+    --fs-risk-high: #e0713f;
+    --fs-risk-extreme: #c4483f;
+
+    --fs-success: #74a68a;
+    --fs-warning: #c9a24e;
+    --fs-danger: #c4483f;
+    --fs-info: #7f9aa6;
+
+    --fs-bg-canvas-rgb: 16, 18, 20;
+    --fs-bg-surface-rgb: 23, 26, 29;
+    --fs-bg-sunken-rgb: 11, 12, 14;
+    --fs-ink-900-rgb: 232, 233, 234;
+    --fs-ink-700-rgb: 182, 185, 189;
+    --fs-ink-500-rgb: 135, 139, 144;
+    --fs-ink-400-rgb: 95, 100, 106;
+    --fs-accent-rgb: 224, 122, 74;
+    --fs-scrim-rgb: 0, 0, 0;
+}
+
+/* ==================== 2. 旧令牌重定向（浅色） ====================
+ * 装饰类令牌一律删除语义：玻璃→实色、发光→阴影、金属→实色、光晕→无。
+ * 用法检查：metal-sheen / atmo-bg 用于 background（简写），
+ *           line-glow / glow* 用于 box-shadow，text-glow 用于 text-shadow，
+ *           因此给 none / transparent 均合法。
+ * ------------------------------------------------------------------ */
+
+html.theme-v2 {
+    /* —— 背景层级 —— */
+    --gis-bg-deep: var(--fs-bg-canvas);
+    --gis-bg-panel: var(--fs-bg-surface);
+    --gis-bg-panel-2: var(--fs-bg-surface);
+    --gis-bg-header: var(--fs-bg-surface);
+
+    /* —— 玻璃质感：全部改为实色，去掉模糊 —— */
+    --gis-glass: var(--fs-bg-surface);
+    --gis-glass-2: var(--fs-bg-sunken);
+    --gis-glass-solid: var(--fs-bg-surface);
+    --gis-glass-border: var(--fs-hairline);
+    --gis-glass-highlight: transparent;
+    --gis-glass-blur: 0px;
+    --gis-glass-saturate: 100%;
+
+    /* —— 边框 —— */
+    --gis-border: var(--fs-hairline);
+    --gis-border-strong: var(--fs-hairline-strong);
+
+    /* —— 强调色（冷紫 → ember） —— */
+    --gis-accent: var(--fs-accent);
+    --gis-accent-hover: var(--fs-accent-hover);
+    --gis-accent-dim: var(--fs-accent);
+    --gis-accent-soft: var(--fs-accent-soft);
+    --gis-on-accent: var(--fs-on-accent);
+
+    /* —— 发光：全部改为中性阴影或取消 —— */
+    --gis-glow: var(--fs-e1);
+    --gis-glow-strong: var(--fs-e2);
+    --gis-line-glow: none;
+    --gis-text-glow: none;
+
+    /* —— 金属渐变：改为实色 / 取消 —— */
+    --gis-metal-accent: var(--fs-accent);
+    --gis-metal-sheen: transparent;
+    --gis-metal-edge: transparent;
+    --gis-metal-text: var(--fs-ink-900);
+
+    /* —— 氛围光晕与网格底纹：删除 —— */
+    --gis-halo-a: none;
+    --gis-halo-b: none;
+    --gis-halo-c: none;
+    --gis-atmo-bg: var(--fs-bg-canvas);
+    --gis-grid: transparent;
+
+    /* —— 文字 —— */
+    --gis-text: var(--fs-ink-900);
+    --gis-text-muted: var(--fs-ink-500);
+
+    /* —— 控件补充 —— */
+    --gis-scrollbar: var(--fs-hairline-strong);
+    --gis-scrollbar-hover: var(--fs-ink-400);
+    --gis-hover-tint: var(--fs-bg-sunken);
+    --gis-table-header: var(--fs-bg-sunken);
+    --gis-overlay: var(--fs-bg-raised);
+    --gis-mask: var(--fs-mask);
+    --gis-selection: var(--fs-accent-soft);
+
+    /* —— 火险五级快照（与 riskLevel.js 同步） —— */
+    --gis-risk-1: var(--fs-risk-1);
+    --gis-risk-2: var(--fs-risk-2);
+    --gis-risk-3: var(--fs-risk-3);
+    --gis-risk-4: var(--fs-risk-4);
+    --gis-risk-5: var(--fs-risk-5);
+    /* RGB 三元组必须同步到新色板，否则 rgba(var(--gis-risk-N-rgb), .4) 仍画旧青/黄 */
+    --gis-risk-1-rgb: 110, 154, 135;
+    --gis-risk-2-rgb: 168, 168, 90;
+    --gis-risk-3-rgb: 201, 154, 62;
+    --gis-risk-4-rgb: 210, 102, 58;
+    --gis-risk-5-rgb: 168, 53, 46;
+
+    /* —— 圆角 / 间距 —— */
+    --gis-radius-xs: var(--fs-r-xs);
+    --gis-radius-sm: var(--fs-r-sm);
+    --gis-radius-md: var(--fs-r-md);
+    --gis-radius-lg: var(--fs-r-lg);
+    --gis-space-xs: var(--fs-s2);
+    --gis-space-sm: var(--fs-s3);
+    --gis-space-md: var(--fs-s4);
+    --gis-space-lg: var(--fs-s6);
+
+    /* ============ Element Plus 基础变量 ============ */
+    --el-bg-color: var(--fs-bg-surface);
+    --el-bg-color-page: var(--fs-bg-canvas);
+    --el-bg-color-overlay: var(--fs-bg-raised);
+
+    --el-text-color-primary: var(--fs-ink-900);
+    --el-text-color-regular: var(--fs-ink-700);
+    --el-text-color-secondary: var(--fs-ink-500);
+    --el-text-color-placeholder: var(--fs-ink-400);
+    --el-text-color-disabled: var(--fs-ink-400);
+
+    --el-border-color: var(--fs-hairline-strong);
+    --el-border-color-light: var(--fs-hairline);
+    --el-border-color-lighter: var(--fs-hairline);
+    --el-border-color-extra-light: var(--fs-hairline);
+    --el-border-color-dark: var(--fs-hairline-strong);
+    --el-border-color-dark-2: var(--fs-ink-400);
+
+    --el-fill-color: var(--fs-bg-sunken);
+    --el-fill-color-light: var(--fs-bg-sunken);
+    --el-fill-color-lighter: var(--fs-bg-sunken);
+    --el-fill-color-extra-light: var(--fs-bg-sunken);
+    --el-fill-color-dark: var(--fs-hairline-strong);
+    --el-fill-color-darker: var(--fs-ink-400);
+    --el-fill-color-blank: var(--fs-bg-surface);
+    --el-mask-color: var(--fs-mask);
+    --el-mask-color-extra-light: rgba(16, 18, 20, 0.2);
+
+    --el-disabled-bg-color: var(--fs-bg-sunken);
+    --el-disabled-border-color: var(--fs-hairline);
+
+    --el-border-radius-base: var(--fs-r-sm);
+    --el-border-radius-small: var(--fs-r-xs);
+    --el-border-radius-round: var(--fs-r-md);
+
+    /* ============ Element Plus 主色（ember ramp） ============ */
+    --el-color-primary: #a8451f;
+    --el-color-primary-light-3: #c0613a;
+    --el-color-primary-light-5: #d0855f;
+    --el-color-primary-light-7: #e0ac90;
+    --el-color-primary-light-8: #edc8b3;
+    --el-color-primary-light-9: #f6e6dc;
+    --el-color-primary-dark-2: #8f381a;
+
+    /* ============ Element Plus 状态色 ============ */
+    --el-color-success: #4f7a63;
+    --el-color-success-light-3: #6f9984;
+    --el-color-success-light-5: #94b7a4;
+    --el-color-success-light-7: #b8d2c4;
+    --el-color-success-light-8: #d6e7de;
+    --el-color-success-light-9: #edf4f0;
+    --el-color-success-dark-2: #3d624e;
+
+    --el-color-warning: #b38a3c;
+    --el-color-warning-light-3: #c9a75f;
+    --el-color-warning-light-5: #dbc28a;
+    --el-color-warning-light-7: #ebdcb5;
+    --el-color-warning-light-8: #f4ecd9;
+    --el-color-warning-light-9: #faf6ec;
+    --el-color-warning-dark-2: #8f6e30;
+
+    --el-color-danger: #8e2f2a;
+    --el-color-danger-light-3: #ab564f;
+    --el-color-danger-light-5: #c58079;
+    --el-color-danger-light-7: #ddaaa4;
+    --el-color-danger-light-8: #eed6d2;
+    --el-color-danger-light-9: #f8eeec;
+    --el-color-danger-dark-2: #712622;
+
+    --el-color-error: #8e2f2a;
+    --el-color-error-light-3: #ab564f;
+    --el-color-error-light-5: #c58079;
+    --el-color-error-light-7: #ddaaa4;
+    --el-color-error-light-8: #eed6d2;
+    --el-color-error-light-9: #f8eeec;
+    --el-color-error-dark-2: #712622;
+
+    --el-color-info: #5f7c8a;
+    --el-color-info-light-3: #7f9aa6;
+    --el-color-info-light-5: #a3b7c0;
+    --el-color-info-light-7: #c6d4da;
+    --el-color-info-light-8: #e2e9ec;
+    --el-color-info-light-9: #f2f5f7;
+    --el-color-info-dark-2: #4c636e;
+}
+
+/* ==================== 旧令牌重定向（深色） ==================== */
+
+html.theme-v2.dark {
+    --gis-scrollbar: var(--fs-hairline-strong);
+
+    --el-bg-color: var(--fs-bg-surface);
+    --el-bg-color-page: var(--fs-bg-canvas);
+    --el-bg-color-overlay: var(--fs-bg-raised);
+
+    --el-border-color-dark-2: var(--fs-ink-400);
+    --el-mask-color-extra-light: rgba(0, 0, 0, 0.3);
+
+    --el-color-primary: #e07a4a;
+    --el-color-primary-light-3: #e8926a;
+    --el-color-primary-light-5: #efaa8a;
+    --el-color-primary-light-7: #f4c2aa;
+    --el-color-primary-light-8: rgba(224, 122, 74, 0.35);
+    --el-color-primary-light-9: rgba(224, 122, 74, 0.14);
+    --el-color-primary-dark-2: #c4632f;
+
+    --el-color-success: #74a68a;
+    --el-color-success-light-3: #92bb9f;
+    --el-color-success-light-5: #ffffff;
+    --el-color-success-light-7: rgba(116, 166, 138, 0.35);
+    --el-color-success-light-8: rgba(116, 166, 138, 0.25);
+    --el-color-success-light-9: rgba(116, 166, 138, 0.12);
+    --el-color-success-dark-2: #4f7a63;
+
+    --el-color-warning: #c9a24e;
+    --el-color-warning-light-3: #d6b365;
+    --el-color-warning-light-5: #ffffff;
+    --el-color-warning-light-7: rgba(201, 162, 78, 0.35);
+    --el-color-warning-light-8: rgba(201, 162, 78, 0.25);
+    --el-color-warning-light-9: rgba(201, 162, 78, 0.12);
+    --el-color-warning-dark-2: #b38a3c;
+
+    --el-color-danger: #c4483f;
+    --el-color-danger-light-3: #d06d64;
+    --el-color-danger-light-5: #ffffff;
+    --el-color-danger-light-7: rgba(196, 72, 63, 0.35);
+    --el-color-danger-light-8: rgba(196, 72, 63, 0.25);
+    --el-color-danger-light-9: rgba(196, 72, 63, 0.12);
+    --el-color-danger-dark-2: #8e2f2a;
+
+    --el-color-error: #c4483f;
+    --el-color-error-light-3: #d06d64;
+    --el-color-error-light-5: #ffffff;
+    --el-color-error-light-7: rgba(196, 72, 63, 0.35);
+    --el-color-error-light-8: rgba(196, 72, 63, 0.25);
+    --el-color-error-light-9: rgba(196, 72, 63, 0.12);
+    --el-color-error-dark-2: #8e2f2a;
+
+    --el-color-info: #7f9aa6;
+    --el-color-info-light-3: #9bb2bc;
+    --el-color-info-light-5: #ffffff;
+    --el-color-info-light-7: rgba(127, 154, 166, 0.35);
+    --el-color-info-light-8: rgba(127, 154, 166, 0.25);
+    --el-color-info-light-9: rgba(127, 154, 166, 0.12);
+    --el-color-info-dark-2: #5f7c8a;
+}
+
+/* ==================== 3. 全局元素级去装饰 ==================== */
+
+html.theme-v2 {
+    font-family: var(--fs-font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+/* 玻璃面：去模糊、去内高光，改为实色 + 发丝线 */
+html.theme-v2 .gis-glass {
+    background: var(--fs-bg-surface);
+    border: 1px solid var(--fs-hairline);
+    box-shadow: none;
+}
+
+/* 全局关闭 backdrop-filter：本站所有模糊都来自玻璃体系，玻璃已改为实色，
+   保留 blur(0px) 仍会强制创建合成层、拖累大屏帧率，故整站关掉。 */
+html.theme-v2 body *,
+html.theme-v2 body *::before,
+html.theme-v2 body *::after {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+/* 金属字：回归纯文字色 */
+html.theme-v2 .gis-metal-text {
+    background: none;
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+    -webkit-text-fill-color: var(--fs-ink-900);
+    color: var(--fs-ink-900);
+}
+
+/* sc-datav 英文角标：弱化，不再用强调色抢注意力 */
+html.theme-v2 .datav-en {
+    color: var(--fs-ink-400);
+    opacity: 1;
+}
+
+/* 焦点环：跟随强调色，不加发光 */
+html.theme-v2 :focus-visible {
+    outline: 2px solid var(--fs-accent);
+    outline-offset: 2px;
+}
+
+/* Element Plus 内层原生控件不画双环（焦点态由 wrapper 的 is-focus 呈现）。
+   特异性须高于上方 html.theme-v2 :focus-visible 的 (0,2,1)，否则输入框聚焦时
+   会多出 2px+2px 偏移的橙色外环，视觉上比相邻未聚焦框大一圈 */
+html.theme-v2 .el-input__inner:focus-visible,
+html.theme-v2 .el-textarea__inner:focus-visible,
+html.theme-v2 .el-select__input:focus-visible {
+    outline: none;
+}
+
+html.theme-v2 input,
+html.theme-v2 textarea {
+    caret-color: var(--fs-accent);
+}
+
+html.theme-v2 ::selection {
+    background: var(--fs-accent-soft);
+}
+
+/* 滚动条：发丝线级别，不抢内容 */
+html.theme-v2 ::-webkit-scrollbar-thumb {
+    background: var(--fs-hairline-strong);
+}
+html.theme-v2 ::-webkit-scrollbar-thumb:hover {
+    background: var(--fs-ink-400);
+}
+html.theme-v2 .el-scrollbar__thumb {
+    background-color: var(--fs-hairline-strong);
+}
+
+/* 对话框：实色 + e3，去发光与玻璃边 */
+html.theme-v2 .el-dialog {
+    background: var(--fs-bg-raised);
+    border: 1px solid var(--fs-hairline);
+    border-radius: var(--fs-r-lg);
+    box-shadow: var(--fs-e3);
+}
+
+html.theme-v2 .el-message-box {
+    background: var(--fs-bg-raised);
+    border: 1px solid var(--fs-hairline);
+    border-radius: var(--fs-r-lg);
+    box-shadow: var(--fs-e3);
+}
+
+html.theme-v2 .el-message {
+    background: var(--fs-bg-raised);
+    border: 1px solid var(--fs-hairline);
+    border-radius: var(--fs-r-sm);
+    box-shadow: var(--fs-e2);
+}
+
+/* 主按钮：去掉彩色外发光，只保留实色与按下微位移 */
+html.theme-v2 .gis-shell .el-button--primary,
+html.theme-v2 .agent-shell .el-button--primary,
+html.theme-v2 .kb-shell .el-button--primary,
+html.theme-v2 .query-shell .el-button--primary,
+html.theme-v2 .report-shell .el-button--primary,
+html.theme-v2 .admin-shell .el-button--primary {
+    background: var(--fs-accent);
+    box-shadow: none;
+}
+html.theme-v2 .gis-shell .el-button--primary:hover,
+html.theme-v2 .agent-shell .el-button--primary:hover,
+html.theme-v2 .kb-shell .el-button--primary:hover,
+html.theme-v2 .query-shell .el-button--primary:hover,
+html.theme-v2 .report-shell .el-button--primary:hover,
+html.theme-v2 .admin-shell .el-button--primary:hover {
+    background: var(--fs-accent-hover);
+    box-shadow: none;
+}
+
+/* 输入框聚焦：边框转强调色，去掉 3px 发光环 */
+html.theme-v2 .gis-shell .el-input__wrapper.is-focus,
+html.theme-v2 .gis-shell .el-select__wrapper.is-focused,
+html.theme-v2 .agent-shell .el-input__wrapper.is-focus,
+html.theme-v2 .agent-shell .el-select__wrapper.is-focused,
+html.theme-v2 .kb-shell .el-input__wrapper.is-focus,
+html.theme-v2 .kb-shell .el-select__wrapper.is-focused,
+html.theme-v2 .query-shell .el-input__wrapper.is-focus,
+html.theme-v2 .query-shell .el-select__wrapper.is-focused,
+html.theme-v2 .report-shell .el-input__wrapper.is-focus,
+html.theme-v2 .admin-shell .el-input__wrapper.is-focus {
+    box-shadow: 0 0 0 1px var(--fs-accent) inset !important;
+}
+
+/* 表格：去玻璃底，表头用 sunken，行间仅发丝线 */
+html.theme-v2 .el-table {
+    --el-table-bg-color: transparent;
+    --el-table-header-bg-color: var(--fs-bg-sunken);
+    --el-table-header-text-color: var(--fs-ink-500);
+    --el-table-text-color: var(--fs-ink-700);
+    --el-table-border-color: var(--fs-hairline);
+    --el-table-row-hover-bg-color: var(--fs-bg-sunken);
+}
+
+/* 数字表面统一等宽对齐（指挥端读数关键） */
+html.theme-v2 .el-input__inner,
+html.theme-v2 .el-select__placeholder {
+    font-variant-numeric: tabular-nums;
+}
+
+/* 裸按钮基础复位：去除 UA 默认边框与背景（暗色主题下 border 呈亮白边、
+   background(buttonface) 呈突兀深灰方块），各组件样式按类选择器按需覆盖 */
+button {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+}

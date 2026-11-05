@@ -109,6 +109,9 @@ pytz==2026.3.post1
 pywin32==312
 PyYAML==6.0.3
 rapidocr-onnxruntime==1.4.4
+# 可选：本地 PaddleOCR 首选引擎（未安装时 OCR 链路自动跳过，依次回落到 MinerU / RapidOCR）
+paddleocr>=3.0.0
+paddlepaddle>=3.0.0
 referencing==0.37.0
 regex==2026.8.31
 requests==2.34.2

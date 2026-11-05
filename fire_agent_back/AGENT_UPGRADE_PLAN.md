@@ -1,5 +1,7 @@
 # 焰哨多 Agent 平台 — Agent 技术升级规划方案
 
+> **状态（2026-11-02）**：本计划所列 #7 HITL 审批、#10 评审循环等核心项均已落地；现状以代码为准——评审为三态（`passed` / `returned` 退回重写 ≤2 轮 / `degraded` 评审失败转人工，`review_status` 落步骤 output），报告生成内置两轮思考重试（复读近似检测 + `thinking_rounds` 分轮），`resume` 带 409 语义化错误码与并发锁。本文档保留为规划期快照，细节不再随代码更新。
+>
 > 制定日期：2026-09-27（v2：补充招聘市场对标 + 难点/创新点）
 > 依据：全量代码走读（后端 ~4.6k 行 / 前端 ~9.6k 行）+ 2025–2026 Agent 技术调研 + 15+ 份真实 JD 调研（腾讯/字节/猎聘/BOSS）
 > 原则：**够用就好，能 workflow 不 agent；每一项技术必须对应真实痛点，不为实现而实现**
@@ -110,8 +112,8 @@ parse_task → query_data → analyze_gis → retrieve_knowledge → generate_re
 
 1. **SSE 真实流式** `[后端+前端]`
    - 后端：`POST /agent/tasks` 改为立即返回 task_id，新增 `GET /agent/tasks/{id}/stream`（SSE，`graph.astream(stream_mode="updates")` 桥接为节点进度事件）
-   - 前端 agent-center：删掉 600ms 假动画，EventSource 消费真实节点事件
-   - 验收：任务执行中前端步骤状态与后端节点严格一致；断网重连用 Last-Event-ID
+   - 前端 agent-center：删掉 600ms 假动画，改为消费真实节点事件（落地时因 token 不能进 URL，由 EventSource 改为 fetch 流 + `Authorization` 头）
+   - 验收：任务执行中前端步骤状态与后端节点严格一致；断网重连不丢进度（实现为连接建立时由服务端按步骤序号从 DB 回放，并补一帧 `report_snapshot`）
 
 2. **结构化输出替代裸解析** `[后端]`
    - `parse_task` 改用 `llm.with_structured_output(PlanSchema)`（Pydantic: `plan: list[SubTask]`）

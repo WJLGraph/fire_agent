@@ -44,6 +44,139 @@ def _num2cn(n: int) -> str:
     return mapping.get(n, str(n))
 
 
+class _ThinkFilter:
+    """流式拆分 <think>…</think> 推理片段（qwen3 / DeepSeek-R1 系模型会输出思考过程）
+
+    标签可能被切分在相邻 chunk 中（如 "<th" + "ink>"），用有状态过滤器处理：
+    - 思考内容捕获到 _think（供前端「思考过程」折叠面板展示），增量只放行最终回答；
+    - 尾部保留可能是未完整标签前缀的字符，待下一个 chunk 拼接后重新判定。
+    """
+
+    _OPEN, _CLOSE = "<think>", "</think>"
+
+    def __init__(self):
+        self._in_think = False
+        self._buf = ""
+        self._emitted: list[str] = []
+        self._think: list[str] = []
+        self._think_delta = ""   # 未推送的思考增量（take_think_delta 取走）
+
+    @staticmethod
+    def _partial_len(buf: str, tag: str) -> int:
+        """buf 尾部可能是 tag 前缀的最大长度（0 = 无可疑前缀，可整体放行）"""
+        for k in range(min(len(buf), len(tag) - 1), 0, -1):
+            if tag.startswith(buf[-k:]):
+                return k
+        return 0
+
+    def feed(self, text: str) -> str:
+        """喂入一个增量，返回本次应输出的干净文本（可能为空）"""
+        self._buf += text
+        out: list[str] = []
+        while self._buf:
+            if self._in_think:
+                end = self._buf.find(self._CLOSE)
+                if end >= 0:
+                    self._push_think(self._buf[:end])
+                    self._buf = self._buf[end + len(self._CLOSE):]
+                    self._in_think = False
+                    continue
+                keep = self._partial_len(self._buf, self._CLOSE)
+                if keep:
+                    self._push_think(self._buf[:len(self._buf) - keep])
+                    self._buf = self._buf[len(self._buf) - keep:]
+                else:
+                    self._push_think(self._buf)
+                    self._buf = ""
+                break
+            start = self._buf.find(self._OPEN)
+            if start >= 0:
+                out.append(self._buf[:start])
+                self._buf = self._buf[start + len(self._OPEN):]
+                self._in_think = True
+                continue
+            keep = self._partial_len(self._buf, self._OPEN)
+            if keep:
+                out.append(self._buf[:-keep])
+                self._buf = self._buf[-keep:]
+            else:
+                out.append(self._buf)
+                self._buf = ""
+            break
+        chunk = "".join(out)
+        if chunk:
+            self._emitted.append(chunk)
+        return chunk
+
+    def _push_think(self, s: str) -> None:
+        """思考增量入账（_think 供终态落库；_think_delta 供流式逐段推送前端）"""
+        if not s:
+            return
+        self._think.append(s)
+        self._think_delta += s
+
+    def take_think_delta(self) -> str:
+        """取走自上次调用以来新增的思考增量（流式"深度思考中"展示）"""
+        d, self._think_delta = self._think_delta, ""
+        return d
+
+    def finish(self) -> str:
+        """流结束：吐出扣留的尾巴；若中断在思考中，剩余内容归入思考（不再放行正文）"""
+        tail, self._buf = self._buf, ""
+        if self._in_think:
+            if tail:
+                self._push_think(tail)
+            return ""
+        if tail:
+            self._emitted.append(tail)
+        return tail
+
+    def text(self) -> str:
+        """全部干净文本（供终态落库）"""
+        return "".join(self._emitted)
+
+    def think_text(self) -> str:
+        """捕获到的思考过程（供前端折叠面板展示）"""
+        return "".join(self._think).strip()
+
+
+_THINK_OPEN_RE = re.compile(r"<think>([\s\S]*?)</think>\s*")
+
+
+def _split_think(text: str) -> tuple[str, str]:
+    """拆分推理内容与最终回答 → (reasoning, answer)
+
+    兼容三种形态（qwen3 / DeepSeek 系模型，含历史脏数据）：
+    - 成对 ``<think>…</think>``        → 思考入 reasoning，其余入 answer；
+    - 未闭合 ``<think>…``（流中断）    → 其后内容入 reasoning，前置文字保留在 answer；
+    - 孤立 ``</think>``（开头标签缺失的旧数据）→ 之前全部视作思考，之后为回答。
+    """
+    if not text:
+        return "", ""
+    clean = str(text)
+    reasoning: list[str] = []
+
+    def _capture(m: "re.Match") -> str:
+        reasoning.append(m.group(1).strip())
+        return ""
+
+    clean = _THINK_OPEN_RE.sub(_capture, clean)
+    if "<think>" in clean:
+        idx = clean.find("<think>")
+        reasoning.append(clean[idx + len("<think>"):].strip())
+        clean = clean[:idx]
+    elif "</think>" in clean:
+        pre, _, post = clean.partition("</think>")
+        reasoning.append(pre.strip())
+        clean = post
+    return "\n".join(r for r in reasoning if r), clean.strip()
+
+
+def _strip_think(text: str) -> str:
+    """仅取剥离思考后的正文（播报/落库等场景）"""
+    return _split_think(text)[1]
+
+
 def _extract_keywords(text: str) -> list[str]:
     """提取中文检索关键词：
     1. 英文/数字整体保留
@@ -175,9 +308,45 @@ class RagService:
         docs = q.order_by(KbDocument.created_at.desc()).all()
         return [
             {"id": d.id, "title": d.title, "category": d.category, "status": d.status, "summary": d.summary,
+             "file_type": d.file_type, "chunk_count": len(d.chunks) if d.chunks else 0,
              "created_at": str(d.created_at) if d.created_at else ""}
             for d in docs
         ]
+
+    def get_document_content(self, doc_id: int, user_id: int = None, is_admin: bool = False) -> tuple | None:
+        """文档全文阅读：按分片序号拼接正文，返回 (标题, 正文, 分片数)；无权限/不存在返回 None"""
+        from app.models.kb_document import KbDocument, KbChunk
+
+        doc = (
+            self.db.query(KbDocument)
+            .filter(KbDocument.id == doc_id)
+            .first()
+        )
+        if not doc:
+            return None
+        if not is_admin and doc.user_id not in (None, user_id):
+            return None
+        chunks = (
+            self.db.query(KbChunk)
+            .filter(KbChunk.document_id == doc_id)
+            .order_by(KbChunk.chunk_index.asc())
+            .all()
+        )
+        text = "\n\n".join((c.content or "").strip() for c in chunks if (c.content or "").strip())
+        return doc.title, text, len(chunks)
+
+    def get_document_file(self, doc_id: int, user_id: int = None, is_admin: bool = False) -> tuple | None:
+        """原始文件阅读：返回 (标题, 源文件路径, 文件类型)；无权限/不存在/文件缺失返回 None"""
+        from app.models.kb_document import KbDocument
+
+        doc = self.db.query(KbDocument).filter(KbDocument.id == doc_id).first()
+        if not doc:
+            return None
+        if not is_admin and doc.user_id not in (None, user_id):
+            return None
+        if not doc.source_path or not Path(doc.source_path).exists():
+            return None
+        return doc.title, doc.source_path, (doc.file_type or "").lower()
 
     def delete_document(self, doc_id: int, user_id: int = None, is_admin: bool = False) -> bool:
         """删除文档（仅本人或管理员）"""
@@ -439,9 +608,12 @@ class RagService:
 
 要求：
 1. 回答必须基于参考文档中的内容，不得编造文档中不存在的信息；
-2. 在回答中引用对应的来源编号，例如「根据[来源1]…」；
+2. 来源引用必须规范：每一个来自文档的事实、数据或结论，句末都要紧跟固定格式的角标
+   [来源N]（N 为参考文档编号，如 [来源1]；一句话引用多个来源写 [来源1][来源2]）。
+   禁止用「根据文档」「资料显示」等文字代替角标，也不要遗漏；
 3. 如果参考文档无法覆盖问题，请明确说明"知识库文档中未找到该信息"；
-4. 用简洁、专业的中文回答。
+4. 用简洁、专业的中文回答，适合用分点/小标题时使用 markdown 组织；
+5. 直接输出最终回答，不要输出思考过程或 <think> 内容。
 
 参考文档：
 {context_text}
@@ -527,21 +699,25 @@ class RagService:
 回答："""
 
         llm_result = None
+        reasoning = ""
         try:
             llm_result = invoke_llm(prompt, temperature=0.1)
         except Exception as e:
             answer = f"RagAgent 调用 LLM 失败，已返回原始检索片段。\n\n检索到 {len(refs)} 个相关片段，详见下方引用来源。（{e}）"
         else:
             if llm_result is not None:
-                answer = llm_result.text
+                reasoning, answer = _split_think(llm_result.text)
             else:
                 answer = (f"RagAgent 调用 LLM 失败（所有模型通道均不可用），已返回原始检索片段。\n\n"
                           f"检索到 {len(refs)} 个相关片段，详见下方引用来源。")
 
         return {
             "answer": answer,
+            "reasoning": reasoning,
             "references": refs,
             "llm_used": True,
+            "llm_model": (llm_result.model if llm_result else "") or "",
+            "llm_degraded": bool(llm_result.degraded) if llm_result else False,
             "retrieval": retri_meta,
         }
 
@@ -572,18 +748,37 @@ class RagService:
             return
 
         prompt = self._rag_prompt(query, refs)
+        think = _ThinkFilter()          # 流式过滤 <think>…</think>（标签跨 chunk 安全）
+        reasoning_field: list[str] = []  # reasoning 字段思考增量（AMD/vLLM 端点）
         buf: list[str] = []
         streamed_ok = False
+        model_name, degraded = "", False
         try:
-            for chunk in stream_llm(prompt, temperature=0.1):
+            # reasoning_effort=low 限思；max_tokens 需容纳思考+正文（实测 MiniCPM 思考 ~770 字），
+            # 防思考吃满额度导致正文为空
+            for chunk in stream_llm(prompt, temperature=0.1, max_tokens=2400,
+                                    reasoning_effort="low"):
                 ctype = chunk.get("type")
-                if ctype == "delta":
-                    buf.append(chunk.get("text", ""))
-                    yield {"type": "delta", "text": chunk.get("text", "")}
+                if ctype == "think":
+                    # 思考型模型 reasoning 字段增量（AMD/vLLM 端点），直接透传前端
+                    reasoning_field.append(chunk.get("text", ""))
+                    yield {"type": "think", "text": chunk.get("text", "")}
+                elif ctype == "delta":
+                    clean = think.feed(chunk.get("text", ""))
+                    think_delta = think.take_think_delta()
+                    if think_delta:
+                        # 思考过程增量（qwen3 / DeepSeek 系模型的 <think> 段）：
+                        # 前端"深度思考中…"折叠面板实时展示
+                        yield {"type": "think", "text": think_delta}
+                    if clean:
+                        buf.append(clean)
+                        yield {"type": "delta", "text": clean}
                 elif ctype == "meta":
                     streamed_ok = True
+                    model_name = chunk.get("model") or ""
+                    degraded = bool(chunk.get("degraded"))
                     yield {"type": "llm_meta", "provider": chunk.get("provider"),
-                           "degraded": bool(chunk.get("degraded"))}
+                           "model": model_name, "degraded": degraded}
                     break
                 elif ctype == "error":
                     break
@@ -591,9 +786,18 @@ class RagService:
             streamed_ok = False
 
         if streamed_ok:
+            tail = think.finish()       # 吐出扣留的疑似标签尾巴
+            think_tail = think.take_think_delta()
+            if think_tail:
+                yield {"type": "think", "text": think_tail}
+            if tail:
+                buf.append(tail)
+                yield {"type": "delta", "text": tail}
             yield {"type": "done",
-                   "result": {"answer": "".join(buf), "references": refs,
-                              "llm_used": True, "retrieval": retri_meta}}
+                   "result": {"answer": "".join(buf),
+                              "reasoning": "\n".join([t for t in (think.think_text(), "".join(reasoning_field)) if t]),
+                              "references": refs, "llm_used": True, "llm_model": model_name,
+                              "llm_degraded": degraded, "retrieval": retri_meta}}
         else:
             # 流式失败 → 回退非流式（invoke_llm 完整重试链），保证用户总能拿到回答
             yield {"type": "done",
@@ -672,8 +876,8 @@ class RagService:
         return False
 
     @staticmethod
-    def _ocr_pdf(file_path: Path, max_pages: int = 60) -> str:
-        """对 PDF 逐页渲染为图片并用 RapidOCR 识别文字（兜底方案）
+    def _ocr_pdf_rapid(file_path: Path, max_pages: int = 60) -> str:
+        """RapidOCR 逐页识别（本地轻量引擎，OCR 链路最后兜底）
 
         适用于：GB/T 国家标准 PDF（自定义字体编码导致文字层乱码）、扫描件。
         RapidOCR 基于 ONNX 离线推理，无需联网、无需系统级 Tesseract。
@@ -701,11 +905,66 @@ class RagService:
         return "\n".join(pages_text)
 
     @staticmethod
-    def _extract_pdf(file_path: Path) -> str:
-        """PDF 文本提取：pdfplumber → pypdf → PyMuPDF → RapidOCR 依次尝试
+    def _ocr_pdf_paddle(file_path: Path, max_pages: int = 60) -> str:
+        """PaddleOCR 逐页识别（本地增强引擎，OCR 链路首选）
 
-        前三个库提取文字层并做乱码/空文本检测；全部失败时自动降级到
-        RapidOCR 图像识别（解决 GB/T 标准 PDF 乱码与扫描件问题）。
+        可选依赖：pip install paddleocr paddlepaddle（未安装时抛出 ImportError，
+        由调用方跳过，不影响 RapidOCR 与云端 MinerU 链路）。
+        同时兼容 PaddleOCR 2.x（ocr(img, cls=True)）与 3.x（predict(img)）。
+        """
+        import pymupdf
+        import numpy as np
+        from paddleocr import PaddleOCR
+
+        try:
+            ocr = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)  # 2.x
+        except (TypeError, ValueError):
+            # 3.x：PDF 页面已正向渲染，关闭文档方向分类与去畸变以提速
+            # enable_mkldnn=False：规避 Windows + Paddle 3.x 的 oneDNN
+            # ConvertPirAttribute2RuntimeAttribute 崩溃（CPU 推理回退到原生实现）
+            ocr = PaddleOCR(
+                lang="ch",
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                enable_mkldnn=False,
+            )
+
+        doc = pymupdf.open(str(file_path))
+        pages_text = []
+        try:
+            for i, page in enumerate(doc):
+                if i >= max_pages:
+                    pages_text.append(f"[提示：文档超过 {max_pages} 页，仅 OCR 前 {max_pages} 页]")
+                    break
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2))
+                # PyMuPDF 输出 RGB(A)，PaddleOCR 期望 BGR
+                img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+                if pix.n == 4:
+                    img = img[:, :, :3]
+                img = img[:, :, ::-1]
+
+                if hasattr(ocr, "predict"):  # 3.x
+                    result = ocr.predict(img)
+                    for page_res in result or []:
+                        # 3.x 返回 OCRResult（dict-like），兼容 dict 与对象两种形态
+                        texts = page_res.get("rec_texts") if hasattr(page_res, "get") else None
+                        if texts:
+                            pages_text.append("\n".join(str(t) for t in texts))
+                else:  # 2.x
+                    result = ocr.ocr(img, cls=True)
+                    for line in (result[0] if result else []) or []:
+                        pages_text.append(line[1][0])
+        finally:
+            doc.close()
+        return "\n".join(pages_text)
+
+    @staticmethod
+    def _extract_pdf(file_path: Path) -> str:
+        """PDF 文本提取：pdfplumber → pypdf → PyMuPDF → PaddleOCR → AMD MinerU(可选) → RapidOCR
+
+        前三个库提取文字层并做乱码/空文本检测；全部失败时走图像 OCR：
+        先本地 PaddleOCR（增强引擎，未安装自动跳过），再由 OCR_PROVIDER=amd
+        决定是否调用云端 MinerU2.5-Pro 增强，最后用本地 RapidOCR 轻量兜底。
         """
         reasons = []
         for extractor in ("pdfplumber", "pypdf", "fitz"):
@@ -745,23 +1004,49 @@ class RagService:
                 continue
             return text
 
-        # ===== 文字层全部不可用 → OCR 兜底 =====
+        # ===== 文字层全部不可用 → OCR：PaddleOCR → MinerU2.5-Pro（可选）→ RapidOCR =====
+        # 顺序按部署偏好：先本地能力最强的 PaddleOCR，再云端 MinerU 增强，
+        # RapidOCR 作为最后的轻量兜底。
         try:
-            ocr_text = RagService._ocr_pdf(file_path)
+            ocr_text = RagService._ocr_pdf_paddle(file_path)
         except ImportError:
-            ocr_text = ""
+            reasons.append("paddleocr: 未安装")
         except Exception as e:
-            reasons.append(f"ocr: {e}")
-            ocr_text = ""
+            reasons.append(f"paddleocr: {str(e)[:120]}")
+        else:
+            if ocr_text and len(ocr_text.strip()) >= 20 and not RagService._is_garbled_cn(ocr_text):
+                return ocr_text
+            reasons.append("paddleocr: 识别结果为空")
 
-        if ocr_text and len(ocr_text.strip()) >= 20 and not RagService._is_garbled_cn(ocr_text):
-            return ocr_text
+        if settings.OCR_PROVIDER == "amd":
+            try:
+                from app.core.llm import amd_ocr_pdf
+                ocr_text = amd_ocr_pdf(file_path)
+                if ocr_text and len(ocr_text.strip()) >= 20 and not RagService._is_garbled_cn(ocr_text):
+                    return ocr_text
+                reasons.append(f"amd-ocr({settings.OCR_MODEL}): 识别结果为空")
+            except Exception as e:
+                reasons.append(f"amd-ocr({settings.OCR_MODEL}): {str(e)[:120]}")
+        else:
+            reasons.append("amd-ocr: 未启用（OCR_PROVIDER!=amd）")
+
+        try:
+            ocr_text = RagService._ocr_pdf_rapid(file_path)
+        except ImportError:
+            reasons.append("rapidocr: 未安装")
+        except Exception as e:
+            reasons.append(f"rapidocr: {str(e)[:120]}")
+        else:
+            if ocr_text and len(ocr_text.strip()) >= 20 and not RagService._is_garbled_cn(ocr_text):
+                return ocr_text
+            reasons.append("rapidocr: 识别结果为空")
 
         joined = "；".join(reasons)
         if "乱码" in joined:
             raise ValueError(
                 "该 PDF 为 GB/T 国家标准全文文件（文字层使用自定义字体编码，提取后为乱码），"
-                "且 OCR 识别失败或未安装 OCR 组件（pip install rapidocr-onnxruntime）。"
+                "且 OCR 识别失败或未安装 OCR 组件"
+                "（pip install rapidocr-onnxruntime，可选 paddleocr paddlepaddle）。"
                 "请安装 OCR 组件后重新上传，或直接上传 TXT / Markdown 文档。"
             )
         if "扫描件" in joined or "无文字" in joined:

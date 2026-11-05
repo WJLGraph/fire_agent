@@ -1,0 +1,878 @@
+/**
+ * =============================================================================
+ * ui-polish.css — 全局「精修层」（第 4 层：common → gis-theme → theme-v2 → qt → 本文件）
+ *
+ * 目标：在不改动任何主题令牌（--fs-* / --gis-* / --el-color-*）取值、不改动
+ *       明暗切换机制的前提下，把整站的「交互质感」抬到大厂水准：
+ *       统一的过渡节奏、中性抬升（去彩色辉光）、克制的镜面扫光、
+ *       更精致的弹层入场、可读性更强的数据表面，以及一批可直接挂用的工具类。
+ *
+ * 硬约束（与 qt.css 同源，逐条自检）：
+ *   1. 不新造任何颜色值。只引用既有 --fs-* / --el-* 令牌；
+ *      唯一例外是「白色镜面高光」rgba(255,255,255,.14~.22)，
+ *      它不是色相而是光照，且 theme-v2 已把它写进 .qbtn--primary 的语言里。
+ *   2. 不使用 backdrop-filter（theme-v2 已全局禁用，本文件不得复活它）。
+ *   3. 不使用彩色发光（box-shadow 一律走 --fs-e1/e2/e3 中性阴影）。
+ *   4. Element Plus 覆写统一挂在 html.theme-v2 下，v2 关闭时整层自动失效。
+ *   5. 只动 transform / opacity / box-shadow / border-color / background-color，
+ *      不动 width/height/top/left，避免触发布局抖动与大屏掉帧。
+ *   6. 所有循环动画必须能被三态开关关掉：
+ *      html[data-motion-allowed="false"] 与 @media reduce + html:not([data-motion="on"])
+ *      双闸门（见文末 §9），与 qt.css 的 .mo-loop 规则口径一致。
+ * =============================================================================
+ */
+
+/* ==================== 0. 节奏令牌（只新增时长/曲线，不新增颜色） ==================== */
+:root {
+    /* 比 --fs-dur-micro 更快一档：用于 8px 级小控件（图标钮、分段器、标签） */
+    --up-dur-fast: 120ms;
+    /* 标准交互档：hover / focus / 颜色过渡 */
+    --up-dur: 180ms;
+    /* 弹层与位移档：dialog / drawer / 入场 */
+    --up-dur-slow: 320ms;
+    /* 出场要「收得快」，符合 Material/Apple 的共同经验（入慢出快） */
+    --up-dur-out: 160ms;
+    /* 起步快、收尾长的减速曲线（比 --fs-ease 更「跟手」，用于位移类） */
+    --up-ease: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* ==================== 1. 焦点可达性（键盘环统一，鼠标不出现） ====================
+   theme-v2 已给 :focus-visible 画环，这里补三处易漏：
+   - 环色跟随强调色但不加发光
+   - 深色下 2px 实环对比足够，不再额外加 offset
+   - 原生 outline 不被组件 reset 吃掉（common.css 的 input:focus 归零只影响 input） */
+html.theme-v2 a:focus-visible,
+html.theme-v2 button:focus-visible,
+html.theme-v2 [tabindex]:focus-visible,
+html.theme-v2 summary:focus-visible {
+    outline: 2px solid var(--fs-accent);
+    outline-offset: 2px;
+    border-radius: var(--fs-r-xs);
+}
+
+/* 控件外壳豁免：EP 2.9 把 tabindex 提到了 .el-select__wrapper 上，
+   原生 outline（2px + 2px 偏移）会叠在 wrapper 自带的「1px 强调描边 + 3px 光环」之外，
+   形成三环嵌套、且聚焦框比邻框大一圈。此处统一只留外壳光环一档。
+   特异性与 theme-v2 的 html.theme-v2 :focus-visible 同为 (0,2,1)，靠后加载接管。 */
+html.theme-v2 :is(.el-select__wrapper, .el-input__wrapper, .el-range-editor,
+                  .el-textarea__inner, .el-input__inner, .el-select__input,
+                  .el-color-picker__trigger, .el-input-number):focus-visible {
+    outline: none;
+}
+
+/* ==================== 2. Element Plus — 按钮 ====================
+   现状问题：gis-theme 给「默认按钮」hover 加了 0 4px 14px var(--gis-accent-soft)
+   的彩色辉光，与 theme-v2「去发光」的整体语言冲突（主按钮已被 theme-v2 归零，
+   默认按钮漏网）。此处统一改为中性抬升：发丝边加亮 + --fs-e1 + 上浮 1px。 */
+
+html.theme-v2 .el-button {
+    border-radius: var(--fs-r-sm);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    transition:
+        color var(--up-dur-fast) var(--up-ease),
+        background-color var(--up-dur-fast) var(--up-ease),
+        border-color var(--up-dur-fast) var(--up-ease),
+        box-shadow var(--up-dur-fast) var(--up-ease),
+        transform var(--up-dur-fast) var(--up-ease);
+}
+
+html.theme-v2 .el-button:not(.el-button--primary):not(.is-text):not(.is-link):not(.is-disabled):hover {
+    border-color: var(--fs-hairline-strong);
+    box-shadow: var(--fs-e1);
+    transform: translateY(-1px);
+}
+html.theme-v2 .el-button:not(.el-button--primary):not(.is-text):not(.is-link):not(.is-disabled):active {
+    transform: translateY(0.5px);
+    box-shadow: none;
+}
+
+/* 文字钮 / 链接钮：只过渡颜色，永不位移（Notion 口径） */
+html.theme-v2 .el-button.is-text,
+html.theme-v2 .el-button.is-link {
+    transition: color var(--up-dur-fast) var(--up-ease), background-color var(--up-dur-fast) var(--up-ease);
+}
+html.theme-v2 .el-button.is-text:not(.is-disabled):hover {
+    background: rgba(var(--fs-ink-900-rgb), 0.05);
+}
+
+/* 主按钮：顶边 1px 白色镜面高光（Dark Mode 手法）+ 中性投影；
+   选择器同时列出六个页壳，因为 theme-v2 的主按钮规则是页壳作用域的（特异性 0,3,1），
+   本层靠「同特异性 + 后加载」接管，缺了页壳分支就会打不进去。 */
+html.theme-v2 .el-button--primary,
+html.theme-v2 :is(.gis-shell, .agent-shell, .kb-shell, .query-shell, .report-shell, .admin-shell) .el-button--primary {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid transparent;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), var(--fs-e1);
+}
+html.theme-v2 .el-button--primary:hover:not(.is-disabled),
+html.theme-v2 :is(.gis-shell, .agent-shell, .kb-shell, .query-shell, .report-shell, .admin-shell) .el-button--primary:hover:not(.is-disabled) {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), var(--fs-e2);
+    transform: translateY(-1px);
+}
+html.theme-v2 .el-button--primary:active:not(.is-disabled),
+html.theme-v2 :is(.gis-shell, .agent-shell, .kb-shell, .query-shell, .report-shell, .admin-shell) .el-button--primary:active:not(.is-disabled) {
+    transform: translateY(0.5px) scale(0.99);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+html.theme-v2 .el-button--primary.is-disabled {
+    box-shadow: none;
+    transform: none;
+}
+
+/* 主按钮镜面扫光：hover 时一道 22% 白高光斜扫而过（620ms，只跑一次）。
+   这是本层唯一「张扬」的元素，克制在 primary CTA 上，页面视觉重心不会被稀释。 */
+html.theme-v2 .el-button--primary::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(115deg, transparent 38%, rgba(255, 255, 255, 0.22) 50%, transparent 62%);
+    transform: translateX(-130%);
+}
+html.theme-v2 .el-button--primary:hover:not(.is-disabled)::after {
+    animation: up-sheen 0.62s var(--up-ease);
+}
+@keyframes up-sheen {
+    to { transform: translateX(130%); }
+}
+
+/* 圆形 / 图标钮：确保扫光不外溢成方角 */
+html.theme-v2 .el-button.is-circle::after,
+html.theme-v2 .el-button.is-round::after {
+    border-radius: inherit;
+}
+
+/* ==================== 3. Element Plus — 输入类控件 ==================== */
+
+html.theme-v2 .el-input__wrapper,
+html.theme-v2 .el-select__wrapper,
+html.theme-v2 .el-textarea__inner {
+    transition:
+        box-shadow var(--up-dur-fast) var(--up-ease),
+        border-color var(--up-dur-fast) var(--up-ease),
+        background-color var(--up-dur-fast) var(--up-ease);
+}
+/* hover 只提亮发丝边，不染强调色（强调色留给 focus，一档一义） */
+html.theme-v2 .el-input__wrapper:hover,
+html.theme-v2 .el-select__wrapper:hover {
+    box-shadow: 0 0 0 1px var(--fs-hairline-strong) inset !important;
+}
+/* focus：1px 强调描边 + 3px 柔和光环（沿用既有令牌，只是把过渡调顺） */
+html.theme-v2 .el-input__wrapper.is-focus,
+html.theme-v2 .el-select__wrapper.is-focused,
+html.theme-v2 :is(.report-shell, .admin-shell) .el-select__wrapper.is-focused {
+    box-shadow: 0 0 0 1px var(--fs-accent) inset, 0 0 0 3px var(--fs-accent-soft) !important;
+}
+html.theme-v2 .el-textarea__inner:focus {
+    box-shadow: 0 0 0 1px var(--fs-accent) inset, 0 0 0 3px var(--fs-accent-soft);
+}
+/* 表单标签：加一档字重与字距，读起来像「字段名」而不是正文 */
+html.theme-v2 .el-form-item__label {
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    color: var(--fs-ink-700);
+}
+/* 输入计数 / 错误提示：等宽数字，避免位数变化时抖动 */
+html.theme-v2 .el-input__count,
+html.theme-v2 .el-form-item__error {
+    font-variant-numeric: tabular-nums;
+}
+html.theme-v2 .el-form-item__error {
+    font-size: 11px;
+    letter-spacing: 0.01em;
+}
+
+/* 下拉面板：发丝边 + e3 浮起，选项圆角化并统一过渡 */
+html.theme-v2 .el-select-dropdown,
+html.theme-v2 .el-popper.is-light {
+    border-radius: var(--fs-r-md);
+}
+html.theme-v2 .el-select-dropdown__item {
+    transition:
+        background-color var(--up-dur-fast) var(--up-ease),
+        color var(--up-dur-fast) var(--up-ease);
+}
+html.theme-v2 .el-dropdown-menu__item {
+    transition:
+        background-color var(--up-dur-fast) var(--up-ease),
+        color var(--up-dur-fast) var(--up-ease);
+}
+html.theme-v2 .el-dropdown-menu__item:not(.is-disabled):hover {
+    background: rgba(var(--fs-ink-900-rgb), 0.05);
+    color: var(--fs-ink-900);
+}
+
+/* ==================== 4. Element Plus — 数据表面（表格 / 分页 / 描述列表） ==================== */
+
+html.theme-v2 .el-table {
+    font-variant-numeric: tabular-nums;
+}
+/* 表头：字号降一档、字距拉开，形成「图纸表头」而非「大号正文」 */
+html.theme-v2 .el-table th.el-table__cell {
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+}
+/* 行 hover：背景过渡 + 首列 2px 强调轨（大屏扫读时定位当前行的关键反馈） */
+html.theme-v2 .el-table .el-table__row > td.el-table__cell {
+    transition: background-color var(--up-dur-fast) var(--up-ease), box-shadow var(--up-dur-fast) var(--up-ease);
+}
+html.theme-v2 .el-table__body tr:hover > td.el-table__cell:first-child {
+    box-shadow: inset 2px 0 0 var(--fs-accent);
+}
+/* 单元格内的操作按钮：静息弱化，行 hover 时才恢复（减少表格视觉噪声） */
+html.theme-v2 .el-table__body tr .el-button.is-link,
+html.theme-v2 .el-table__body tr .el-button.is-text {
+    opacity: 0.72;
+    transition: opacity var(--up-dur-fast) var(--up-ease), color var(--up-dur-fast) var(--up-ease);
+}
+html.theme-v2 .el-table__body tr:hover .el-button.is-link,
+html.theme-v2 .el-table__body tr:hover .el-button.is-text {
+    opacity: 1;
+}
+/* 空态：说明文字弱一档 */
+html.theme-v2 .el-table__empty-text {
+    color: var(--fs-ink-500);
+    letter-spacing: 0.02em;
+}
+
+html.theme-v2 .el-pagination {
+    --el-pagination-button-bg-color: transparent;
+    font-variant-numeric: tabular-nums;
+}
+html.theme-v2 .el-pager li,
+html.theme-v2 .el-pagination button {
+    border-radius: var(--fs-r-xs);
+    transition: color var(--up-dur-fast) var(--up-ease), background-color var(--up-dur-fast) var(--up-ease);
+}
+html.theme-v2 .el-pager li:not(.is-active):hover {
+    color: var(--fs-ink-900);
+    background: rgba(var(--fs-ink-900-rgb), 0.05);
+}
+
+html.theme-v2 .el-descriptions__label {
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: var(--fs-ink-500);
+}
+html.theme-v2 .el-descriptions__content {
+    font-variant-numeric: tabular-nums;
+}
+
+/* ==================== 5. Element Plus — 浮层与弹层 ==================== */
+
+/* 对话框：把 EP 默认的「从上方 -20px 落下」改成「从下方 10px 升起 + 0.985 缩放」。
+   升起符合「内容被托出」的物理直觉，缩放让入场有质量感；出场收得更快。 */
+html.theme-v2 .dialog-fade-enter-active .el-overlay-dialog {
+    animation: up-pop-in var(--up-dur-slow) var(--up-ease) both;
+}
+html.theme-v2 .dialog-fade-leave-active .el-overlay-dialog {
+    animation: up-pop-out var(--up-dur-out) var(--fs-ease) both;
+}
+@keyframes up-pop-in {
+    from { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.985); }
+    to { opacity: 1; transform: none; }
+}
+@keyframes up-pop-out {
+    from { opacity: 1; transform: none; }
+    to { opacity: 0; transform: translate3d(0, 6px, 0) scale(0.99); }
+}
+
+/* MessageBox 与对话框同一套物理（EP 默认同样是 -20px 落下，走 msgbox-fade-in） */
+html.theme-v2 .fade-in-linear-enter-active .el-overlay-message-box {
+    animation: up-pop-in var(--up-dur-slow) var(--up-ease) both;
+}
+html.theme-v2 .fade-in-linear-leave-active .el-overlay-message-box {
+    animation: up-pop-out var(--up-dur-out) var(--fs-ease) both;
+}
+
+/* 对话框头/脚：分隔线用发丝级，标题字距收紧一档 */
+html.theme-v2 .el-dialog__title,
+html.theme-v2 .el-message-box__title {
+    font-weight: 600;
+    letter-spacing: -0.005em;
+}
+html.theme-v2 .el-dialog__header {
+    border-bottom: 1px solid var(--fs-hairline);
+    margin-right: 0;
+    padding-bottom: 16px;
+}
+html.theme-v2 .el-dialog__footer {
+    border-top: 1px solid var(--fs-hairline);
+    padding-top: 14px;
+}
+html.theme-v2 .el-dialog__headerbtn,
+html.theme-v2 .el-message-box__headerbtn {
+    transition: color var(--up-dur-fast) var(--up-ease), background-color var(--up-dur-fast) var(--up-ease);
+    border-radius: var(--fs-r-sm);
+}
+html.theme-v2 .el-dialog__headerbtn:hover,
+html.theme-v2 .el-message-box__headerbtn:hover {
+    color: var(--fs-ink-900);
+    background: rgba(var(--fs-ink-900-rgb), 0.05);
+}
+
+/* 抽屉：发丝边 + e3；头部与正文用发丝线分层 */
+html.theme-v2 .el-drawer {
+    box-shadow: var(--fs-e3);
+}
+html.theme-v2 .el-drawer.ltr,
+html.theme-v2 .el-drawer.rtl {
+    border-right: 1px solid var(--fs-hairline);
+    border-left: 1px solid var(--fs-hairline);
+}
+html.theme-v2 .el-drawer__header {
+    margin-bottom: 0;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--fs-hairline);
+    color: var(--fs-ink-900);
+    font-weight: 600;
+    letter-spacing: -0.005em;
+}
+html.theme-v2 .el-drawer__body {
+    padding-top: 16px;
+}
+
+/* 消息条：左侧 2px 语义轨 + e2 浮起（类型色沿用 EP 语义令牌，不新造） */
+html.theme-v2 .el-message {
+    position: relative;
+    overflow: hidden;
+    padding-left: 18px;
+    box-shadow: var(--fs-e2);
+}
+html.theme-v2 .el-message::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--el-color-info);
+}
+html.theme-v2 .el-message--success::before { background: var(--el-color-success); }
+html.theme-v2 .el-message--warning::before { background: var(--el-color-warning); }
+html.theme-v2 .el-message--error::before { background: var(--el-color-danger); }
+
+html.theme-v2 .el-notification {
+    border: 1px solid var(--fs-hairline);
+    border-radius: var(--fs-r-md);
+    box-shadow: var(--fs-e3);
+}
+html.theme-v2 .el-notification__title {
+    font-weight: 600;
+    letter-spacing: -0.005em;
+}
+
+/* 提示气泡：字号与字距收敛，读起来像注释而不是正文 */
+html.theme-v2 .el-tooltip__popper,
+html.theme-v2 .el-popper {
+    letter-spacing: 0.01em;
+}
+
+/* ==================== 6. Element Plus — 状态与过程控件 ==================== */
+
+/* 标签：小圆角 + 字重，hover 只提亮边框（表格行内密集使用，不做位移） */
+html.theme-v2 .el-tag {
+    border-radius: var(--fs-r-xs);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    transition: border-color var(--up-dur-fast) var(--up-ease), background-color var(--up-dur-fast) var(--up-ease);
+}
+
+/* Tabs：指示条 2px、过渡走减速曲线，切页时像「滑过去」而不是「跳过去」 */
+html.theme-v2 .el-tabs__active-bar {
+    height: 2px;
+    border-radius: 2px;
+    background-color: var(--fs-accent);
+    transition: transform var(--up-dur-slow) var(--up-ease), width var(--up-dur-slow) var(--up-ease);
+}
+html.theme-v2 .el-tabs__item {
+    transition: color var(--up-dur-fast) var(--up-ease);
+}
+html.theme-v2 .el-tabs__nav-wrap::after {
+    height: 1px;
+    background-color: var(--fs-hairline);
+}
+
+/* 进度条：轨道用 sunken，填充加过渡（数值刷新时是「长过去」而不是「跳过去」） */
+html.theme-v2 .el-progress-bar__outer {
+    background-color: var(--fs-bg-sunken);
+    border-radius: var(--fs-r-xs);
+}
+html.theme-v2 .el-progress-bar__inner {
+    border-radius: var(--fs-r-xs);
+    transition: width var(--up-dur-slow) var(--up-ease), background-color var(--up-dur-fast) var(--up-ease);
+}
+
+/* 步骤条：节点环发丝化，标题字重分级 */
+html.theme-v2 .el-step__head.is-process .el-step__icon {
+    border-color: var(--fs-accent);
+}
+html.theme-v2 .el-step__title {
+    letter-spacing: 0.01em;
+}
+html.theme-v2 .el-step__line {
+    background-color: var(--fs-hairline-strong);
+}
+
+/* 时间线：节点缩小到 8px 实心点 + 发丝尾线（与 qt.css 的 Vertical Timeline 口径一致） */
+html.theme-v2 .el-timeline-item__node {
+    transition: transform var(--up-dur-fast) var(--up-ease), background-color var(--up-dur-fast) var(--up-ease);
+}
+html.theme-v2 .el-timeline-item__node:hover {
+    transform: scale(1.25);
+}
+html.theme-v2 .el-timeline-item__tail {
+    border-left: 1px solid var(--fs-hairline-strong);
+}
+
+/* 开关 / 复选 / 单选：只调过渡时长曲线，配色沿用 EP 主色（已是 ember ramp） */
+html.theme-v2 .el-switch__core,
+html.theme-v2 .el-checkbox__inner,
+html.theme-v2 .el-radio__inner {
+    transition:
+        background-color var(--up-dur-fast) var(--up-ease),
+        border-color var(--up-dur-fast) var(--up-ease),
+        box-shadow var(--up-dur-fast) var(--up-ease),
+        transform var(--up-dur-fast) var(--up-ease);
+}
+html.theme-v2 .el-checkbox__input.is-checked .el-checkbox__inner,
+html.theme-v2 .el-radio__input.is-checked .el-radio__inner {
+    box-shadow: none;
+}
+
+/* 加载遮罩：淡入淡出走减速曲线；卡片级 loading 不铺纯黑遮罩，改用表面色 88% */
+html.theme-v2 .el-loading-mask {
+    transition: opacity var(--up-dur) var(--up-ease);
+    background-color: rgba(var(--fs-bg-surface-rgb), 0.88);
+}
+html.theme-v2 .el-loading-spinner .el-loading-text {
+    letter-spacing: 0.04em;
+}
+
+/* 卡片：去 EP 默认投影（本体系用发丝边分层），只保留边框过渡 */
+html.theme-v2 .el-card {
+    border: 1px solid var(--fs-hairline);
+    border-radius: var(--fs-r-md);
+    box-shadow: none;
+    transition: border-color var(--up-dur-fast) var(--up-ease), box-shadow var(--up-dur-fast) var(--up-ease);
+}
+html.theme-v2 .el-card__header {
+    border-bottom: 1px solid var(--fs-hairline);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+}
+
+/* 骨架屏：与主题表面色对齐（EP 默认灰在暖纸白底上偏冷） */
+html.theme-v2 .el-skeleton__item {
+    background: var(--fs-bg-sunken);
+}
+
+/* 空态 / 徽标 / 分割线 */
+html.theme-v2 .el-empty__description p {
+    color: var(--fs-ink-500);
+    letter-spacing: 0.02em;
+}
+html.theme-v2 .el-badge__content {
+    border: none;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+}
+html.theme-v2 .el-divider__text {
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    color: var(--fs-ink-500);
+}
+
+/* 滚动条：thumb 加过渡，拖动/hover 时「长粗一点」，比瞬间变色更贵 */
+html.theme-v2 .el-scrollbar__thumb {
+    transition: background-color var(--up-dur-fast) var(--up-ease);
+}
+html.theme-v2 .el-scrollbar__bar {
+    transition: opacity var(--up-dur) var(--up-ease);
+}
+
+/* ==================== 7. 自研基础组件精修（app-*） ====================
+   这些组件在各自 SFC 里是 scoped 样式（特异性 0,2,0 含 [data-v-*]），
+   本层用 html.theme-v2 前缀（0,2,1）接管，只做「加过渡 + 加一档反馈」，
+   不改它们的静态外观，因此不存在双份真相。 */
+
+/* AppPanel：hover 时发丝边加亮一档 —— 指挥台上「哪块面板归我管」的即时反馈 */
+html.theme-v2 .app-panel {
+    transition: border-color var(--up-dur-fast) var(--up-ease), box-shadow var(--up-dur-fast) var(--up-ease);
+}
+html.theme-v2 .app-panel:not(.is-plain):hover {
+    border-color: var(--fs-hairline-strong);
+}
+/* 面板标题行：字号不变，只把标题与副标题的基线间距交给组件，本层补字距 */
+html.theme-v2 .app-panel-title {
+    letter-spacing: 0.01em;
+}
+html.theme-v2 .app-panel-sub {
+    font-variant-numeric: tabular-nums;
+}
+
+/* AppIconButton：过渡曲线统一到减速曲线，hover 补一档中性抬升 */
+html.theme-v2 .app-icon-btn {
+    transition:
+        color var(--up-dur-fast) var(--up-ease),
+        background-color var(--up-dur-fast) var(--up-ease),
+        border-color var(--up-dur-fast) var(--up-ease),
+        box-shadow var(--up-dur-fast) var(--up-ease),
+        transform var(--up-dur-fast) var(--up-ease);
+}
+html.theme-v2 .app-icon-btn:hover:not(:disabled) {
+    box-shadow: var(--fs-e1);
+}
+html.theme-v2 .app-icon-btn:active:not(:disabled) {
+    transform: translateY(0.5px) scale(0.97);
+}
+
+/* AppSegmentedControl：选中项加内高光，像「被按下去的一块键帽」 */
+html.theme-v2 .app-segmented {
+    background: var(--fs-bg-sunken);
+}
+html.theme-v2 .app-segmented-item {
+    transition:
+        color var(--up-dur-fast) var(--up-ease),
+        background-color var(--up-dur-fast) var(--up-ease),
+        box-shadow var(--up-dur-fast) var(--up-ease);
+}
+html.theme-v2 .app-segmented-item.is-active {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), var(--fs-e1);
+}
+
+/* AppBadge：状态点补一次极轻的呼吸（仅 dot 模式；循环动画受 §9 三态闸门管控） */
+html.theme-v2 .app-badge-dot.mo-loop {
+    animation: up-dot 2.6s var(--fs-ease) infinite;
+}
+@keyframes up-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+/* AppSectionTitle：分区标题的 mono 化前缀线（图纸语言），无需改组件模板 */
+html.theme-v2 .app-section-title-text::before {
+    content: '';
+    display: inline-block;
+    width: 14px;
+    height: 1px;
+    margin-right: 8px;
+    vertical-align: middle;
+    background: var(--fs-accent);
+    opacity: 0.7;
+}
+
+/* ==================== 8. 新增工具类（up-*）：只加类名，不覆盖既有选择器 ==================== */
+
+/* 8.1 抬升 / 按压：给任意可点区域挂上统一的物理反馈 */
+.up-lift {
+    transition:
+        border-color var(--up-dur-fast) var(--up-ease),
+        box-shadow var(--up-dur-fast) var(--up-ease),
+        transform var(--up-dur-fast) var(--up-ease);
+}
+.up-lift:hover {
+    border-color: var(--fs-hairline-strong);
+    box-shadow: var(--fs-e2);
+    transform: translateY(-2px);
+}
+.up-lift:active { transform: translateY(0); box-shadow: var(--fs-e1); }
+
+.up-press { transition: transform var(--up-dur-fast) var(--up-ease); }
+.up-press:active { transform: scale(0.985); }
+
+/* 8.2 镜面扫光：主 CTA / 关键磁贴的 hover 高光（配合 overflow:hidden 的容器） */
+.up-sheen { position: relative; overflow: hidden; }
+.up-sheen::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(115deg, transparent 38%, rgba(255, 255, 255, 0.18) 50%, transparent 62%);
+    transform: translateX(-130%);
+}
+.up-sheen:hover::after { animation: up-sheen 0.7s var(--up-ease); }
+
+/* 8.3 淡出发丝线：两端渐隐的 1px 分隔，比通栏实线更「贵」 */
+.up-rule {
+    height: 1px;
+    border: 0;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(var(--fs-ink-900-rgb), 0.14) 18%,
+        rgba(var(--fs-ink-900-rgb), 0.14) 82%,
+        transparent
+    );
+}
+.up-rule--accent {
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(var(--fs-accent-rgb), 0.5) 22%,
+        rgba(var(--fs-accent-rgb), 0.5) 78%,
+        transparent
+    );
+}
+
+/* 8.4 磁贴：Bento 组织单元（实色表面 + 发丝边 + 内顶高光，无渐变无发光） */
+.up-tile {
+    position: relative;
+    background: var(--fs-bg-surface);
+    border: 1px solid var(--fs-hairline);
+    border-radius: var(--fs-r-lg);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    transition:
+        border-color var(--up-dur-fast) var(--up-ease),
+        box-shadow var(--up-dur-fast) var(--up-ease),
+        transform var(--up-dur-fast) var(--up-ease);
+}
+.up-tile:hover {
+    border-color: var(--fs-hairline-strong);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), var(--fs-e2);
+    transform: translateY(-2px);
+}
+
+/* 8.5 指标读数：大屏 KPI 统一排印（等宽数字 + 紧字距 + 单位弱化） */
+.up-kpi {
+    font-family: var(--fs-font-mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    font-size: 28px;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    color: var(--fs-ink-900);
+}
+.up-kpi--lg { font-size: 40px; }
+.up-kpi--sm { font-size: 20px; }
+.up-kpi__unit {
+    margin-left: 4px;
+    font-family: var(--fs-font-sans);
+    font-size: 12px;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    color: var(--fs-ink-500);
+}
+.up-kpi__label {
+    display: block;
+    margin-bottom: 6px;
+    font-family: var(--fs-font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    color: var(--fs-ink-500);
+}
+
+/* 8.6 左侧语义轨：需要强调的行/卡（当前选中、告警项）挂一条 2px 强调边 */
+.up-rail { position: relative; }
+.up-rail::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--fs-accent);
+    border-radius: 0 2px 2px 0;
+    transform: scaleY(var(--up-rail, 1));
+    transform-origin: center;
+    transition: transform var(--up-dur-slow) var(--up-ease);
+}
+.up-rail--muted::before { background: var(--fs-hairline-strong); }
+
+/* 8.7 链接下划线：hover 时从左向右画出（scaleX，不动布局） */
+.up-ul {
+    position: relative;
+    text-decoration: none;
+}
+.up-ul::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -2px;
+    height: 1px;
+    background: currentColor;
+    transform: scaleX(0);
+    transform-origin: left center;
+    transition: transform var(--up-dur) var(--up-ease);
+}
+.up-ul:hover::after,
+.up-ul:focus-visible::after { transform: scaleX(1); }
+
+/* 8.8 网格淡出：给 .qt-grid / .qt-grid--faint 加边缘遮罩，底纹不「切边」 */
+.up-grid-fade {
+    -webkit-mask-image: radial-gradient(ellipse 78% 68% at 50% 42%, #000 42%, transparent 100%);
+    mask-image: radial-gradient(ellipse 78% 68% at 50% 42%, #000 42%, transparent 100%);
+}
+
+/* 8.9 扫描线：容器内一道 1px 亮线自上而下循环（大屏「在探测」的语义装饰）。
+   必须与 .mo-loop 同挂，静态偏好下由 §9 关掉。 */
+.up-scan { position: relative; overflow: hidden; }
+.up-scan::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 1px;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgba(var(--fs-accent-rgb), 0.55), transparent);
+    opacity: 0;
+}
+.up-scan.mo-loop::after {
+    animation: up-scan 3.6s var(--fs-ease) infinite;
+}
+@keyframes up-scan {
+    0% { opacity: 0; transform: translateY(0); }
+    12% { opacity: 1; }
+    88% { opacity: 1; }
+    100% { opacity: 0; transform: translateY(var(--up-scan-h, 240px)); }
+}
+
+/* 8.10 光标闪烁：思考中 / 流式输出末尾的终端感（配合 .mo-loop） */
+.up-caret {
+    display: inline-block;
+    width: 7px;
+    height: 1em;
+    margin-left: 2px;
+    vertical-align: -0.12em;
+    background: var(--fs-accent);
+}
+.up-caret.mo-loop { animation: up-caret 1.05s steps(1, end) infinite; }
+@keyframes up-caret {
+    0%, 50% { opacity: 1; }
+    50.01%, 100% { opacity: 0; }
+}
+
+/* 8.11 骨架微光：加载占位的扫过光泽（配合 .mo-loop） */
+.up-shimmer { position: relative; overflow: hidden; }
+.up-shimmer::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+        100deg,
+        transparent 20%,
+        rgba(var(--fs-ink-900-rgb), 0.06) 45%,
+        transparent 70%
+    );
+    transform: translateX(-100%);
+}
+.up-shimmer.mo-loop::after { animation: up-shimmer 1.5s var(--fs-ease) infinite; }
+@keyframes up-shimmer { to { transform: translateX(100%); } }
+
+/* 8.12 挂载即播的入场（零 JS，天然只跑一次；配合错峰 delay 使用） */
+.up-in { animation: up-in var(--up-dur-slow) var(--fs-ease-out) both; }
+.up-in-rise { animation: up-in-rise 0.5s var(--fs-ease-out) both; }
+.up-in-left { animation: up-in-left 0.42s var(--fs-ease-out) both; }
+.up-in-scale { animation: up-in-scale 0.36s var(--fs-ease-out) both; }
+@keyframes up-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes up-in-rise {
+    from { opacity: 0; transform: translate3d(0, 14px, 0); }
+    to { opacity: 1; transform: none; }
+}
+@keyframes up-in-left {
+    from { opacity: 0; transform: translate3d(-12px, 0, 0); }
+    to { opacity: 1; transform: none; }
+}
+@keyframes up-in-scale {
+    from { opacity: 0; transform: scale(0.97); }
+    to { opacity: 1; transform: none; }
+}
+/* 错峰：前 8 个子项各延后 55ms（比 qt.css .stagger 的 70ms 更密，适合密集面板） */
+.up-stagger > :nth-child(1) { animation-delay: 0ms; }
+.up-stagger > :nth-child(2) { animation-delay: 55ms; }
+.up-stagger > :nth-child(3) { animation-delay: 110ms; }
+.up-stagger > :nth-child(4) { animation-delay: 165ms; }
+.up-stagger > :nth-child(5) { animation-delay: 220ms; }
+.up-stagger > :nth-child(6) { animation-delay: 275ms; }
+.up-stagger > :nth-child(7) { animation-delay: 330ms; }
+.up-stagger > :nth-child(8) { animation-delay: 385ms; }
+
+/* 8.13 数字对齐：任何会轮询刷新的读数都该挂（避免列宽抖动） */
+.up-num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+}
+
+/* 8.14 文字截断 + 多行截断（配合 title 属性使用） */
+.up-clamp-2,
+.up-clamp-3 {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.up-clamp-2 { -webkit-line-clamp: 2; }
+.up-clamp-3 { -webkit-line-clamp: 3; }
+
+/* ==================== 9. 动效三态闸门（与 qt.css .mo-loop 同口径） ====================
+   off（或 auto + 系统减动效）：循环动画全停、入场动画直接落终态、
+   位移类过渡归零（颜色过渡保留，否则主题切换会「闪」）。
+   on：覆盖系统 reduce，用户显式要求动效。 */
+
+html[data-motion-allowed="false"] .up-scan::after,
+html[data-motion-allowed="false"] .up-caret,
+html[data-motion-allowed="false"] .up-shimmer::after,
+html[data-motion-allowed="false"] .app-badge-dot {
+    animation: none !important;
+}
+html[data-motion-allowed="false"] .up-in,
+html[data-motion-allowed="false"] .up-in-rise,
+html[data-motion-allowed="false"] .up-in-left,
+html[data-motion-allowed="false"] .up-in-scale {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+}
+html[data-motion-allowed="false"] .el-button--primary::after,
+html[data-motion-allowed="false"] .up-sheen::after {
+    animation: none !important;
+    transform: translateX(-130%);
+}
+html[data-motion-allowed="false"] .el-button:hover,
+html[data-motion-allowed="false"] .up-lift:hover,
+html[data-motion-allowed="false"] .up-tile:hover,
+html[data-motion-allowed="false"] .app-icon-btn:active,
+html[data-motion-allowed="false"] .el-timeline-item__node:hover {
+    transform: none !important;
+}
+html[data-motion-allowed="false"] .dialog-fade-enter-active .el-overlay-dialog,
+html[data-motion-allowed="false"] .dialog-fade-leave-active .el-overlay-dialog,
+html[data-motion-allowed="false"] .fade-in-linear-enter-active .el-overlay-message-box,
+html[data-motion-allowed="false"] .fade-in-linear-leave-active .el-overlay-message-box {
+    animation-duration: 1ms !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html:not([data-motion="on"]) .up-scan::after,
+    html:not([data-motion="on"]) .up-caret,
+    html:not([data-motion="on"]) .up-shimmer::after,
+    html:not([data-motion="on"]) .app-badge-dot {
+        animation: none !important;
+    }
+    html:not([data-motion="on"]) .up-in,
+    html:not([data-motion="on"]) .up-in-rise,
+    html:not([data-motion="on"]) .up-in-left,
+    html:not([data-motion="on"]) .up-in-scale {
+        animation: none !important;
+        opacity: 1;
+        transform: none;
+    }
+    html:not([data-motion="on"]) .el-button--primary::after,
+    html:not([data-motion="on"]) .up-sheen::after {
+        animation: none !important;
+        transform: translateX(-130%);
+    }
+    html:not([data-motion="on"]) .el-button:hover,
+    html:not([data-motion="on"]) .up-lift:hover,
+    html:not([data-motion="on"]) .up-tile:hover,
+    html:not([data-motion="on"]) .app-icon-btn:active,
+    html:not([data-motion="on"]) .el-timeline-item__node:hover {
+        transform: none !important;
+    }
+}

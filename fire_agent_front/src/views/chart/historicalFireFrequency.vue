@@ -3,13 +3,18 @@
  * 历史火点频次柱状图（左下）
  * 数据：parseGeoData() → dailyCounts，按日期统计火点数量
  * 图表展示 Top 7 高频日期，全屏含分页表格
+ *
+ * 阶段 3：echarts init/dispose/resize/主题重建 交由 components/chart/EChart，
+ *         全屏 + 分页表格交由 components/chart/ChartFullscreenDialog。
+ * ★ option 计算逻辑保持原样，未作任何改动。
  */
-import { FullScreen, ScaleToOriginal } from '@element-plus/icons-vue'
-import { onMounted, ref, nextTick, onUnmounted, computed, watch } from 'vue'
-import * as echarts from 'echarts'
+import { FullScreen } from '@element-plus/icons-vue'
+import { ref, computed, watch } from 'vue'
 import { parseGeoData } from '@/utils/parseGeoData'
 import { chartTokens } from '@/utils/themeTokens'
 import { useThemeStore } from '@/stores/theme'
+import EChart from '@/components/chart/EChart.vue'
+import ChartFullscreenDialog from '@/components/chart/ChartFullscreenDialog.vue'
 
 // 接收 fireData prop（由父组件传入 API 数据或本地数据）
 const props = defineProps({
@@ -31,20 +36,17 @@ watch(() => props.fireData, (val) => {
 
 const geoData = computed(() => rawGeo.value)
 
-// 小图 / 全屏图容器
-const chartRef = ref(null)
-const maxChartRef = ref(null)
-let chartInstance = null
-let maxChartInstance = null
-
 // 全屏状态
 const isMaximized = ref(false)
 const tableData = computed(() => geoData.value.rawFeatures || [])
 
-// 分页
-const currentPage = ref(1)
-const pageSize = ref(20)
-const isLoading = ref(false)
+// 全屏表格列定义（供 ChartFullscreenDialog 渲染）
+const tableColumns = [
+  { prop: 'acq_date', label: '日期', minWidth: 120, sortable: true },
+  { prop: 'acq_time', label: '时间', minWidth: 100 },
+  { prop: 'latitude', label: '纬度', minWidth: 100 },
+  { prop: 'longitude', label: '经度', minWidth: 100 },
+]
 
 // Top 7 高频日期（用 computed 确保响应式更新）
 const top7Days = computed(() => {
@@ -52,22 +54,6 @@ const top7Days = computed(() => {
   if (!counts || !Array.isArray(counts)) return []
   return [...counts].sort((a, b) => b.value - a.value).slice(0, 7)
 })
-
-const paginatedData = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  return tableData.value.slice(start, start + pageSize.value)
-})
-
-const handleCurrentChange = (val) => {
-  isLoading.value = true
-  currentPage.value = val
-  setTimeout(() => { isLoading.value = false }, 300)
-}
-
-const handleSizeChange = (val) => {
-  pageSize.value = val
-  currentPage.value = 1
-}
 
 // 柱状图配置（computed：数据/主题变化时自动更新）
 const option = computed(() => {
@@ -116,67 +102,9 @@ const option = computed(() => {
   }
 })
 
-const initChart = () => {
-  if (chartRef.value) {
-    if (chartInstance) chartInstance.dispose()
-    chartInstance = echarts.init(chartRef.value)
-    chartInstance.setOption(option.value)
-  }
-}
-
-const initMaxChart = () => {
-  if (maxChartRef.value) {
-    if (maxChartInstance) maxChartInstance.dispose()
-    maxChartInstance = echarts.init(maxChartRef.value)
-    maxChartInstance.setOption(option.value)
-  }
-}
-
-const toggleMaximize = async () => {
+const toggleMaximize = () => {
   isMaximized.value = !isMaximized.value
-  await nextTick()
-  if (isMaximized.value) {
-    initMaxChart()
-  } else {
-    chartInstance && chartInstance.resize()
-  }
 }
-
-const handleResize = () => {
-  chartInstance && chartInstance.resize()
-  maxChartInstance && maxChartInstance.resize()
-}
-
-onMounted(() => {
-  initChart()
-  window.addEventListener('resize', handleResize)
-})
-
-// fireData 变化时刷新图表
-watch(() => props.fireData, () => {
-  nextTick(() => {
-    initChart()
-    if (isMaximized.value) {
-      nextTick(() => initMaxChart())
-    }
-  })
-})
-
-// 主题切换时重建图表（option 依赖主题 token，重新 setOption 即可）
-watch(() => theme.mode, () => {
-  nextTick(() => {
-    initChart()
-    if (isMaximized.value) {
-      nextTick(() => initMaxChart())
-    }
-  })
-})
-
-onUnmounted(() => {
-  window.removeEventListener('resize', handleResize)
-  if (chartInstance) chartInstance.dispose()
-  if (maxChartInstance) maxChartInstance.dispose()
-})
 </script>
 
 <template>
@@ -188,61 +116,17 @@ onUnmounted(() => {
           <FullScreen />
         </el-icon>
       </div>
-      <div class="chart-area" ref="chartRef"></div>
+      <EChart class="chart-area" :option="option" />
     </div>
 
-    <!-- 全屏模式 -->
-    <Teleport to="body">
-      <div v-if="isMaximized" class="maximized-view">
-        <div class="header-bar">
-          <span class="max-title">高频火点日期详情</span>
-          <el-button type="primary" circle @click="toggleMaximize">
-            <el-icon size="20">
-              <ScaleToOriginal />
-            </el-icon>
-          </el-button>
-        </div>
-
-        <div class="content-container">
-          <!-- 左侧大图 -->
-          <div class="chart-area-max" ref="maxChartRef"></div>
-
-          <!-- 右侧表格 -->
-          <div class="table-area">
-            <div class="table-content-wrapper">
-              <el-table
-                v-if="isMaximized"
-                v-loading="isLoading"
-                :data="paginatedData"
-                stripe
-                border
-                style="width: 100%; height: 100%; position: absolute; top: 0; left: 0;"
-                :header-cell-style="{ background: 'var(--gis-table-header)', color: 'var(--gis-text-muted)', fontWeight: 'bold' }"
-              >
-                <el-table-column prop="acq_date" label="日期" min-width="120" sortable />
-                <el-table-column prop="acq_time" label="时间" min-width="100" />
-                <el-table-column prop="latitude" label="纬度" min-width="100" />
-                <el-table-column prop="longitude" label="经度" min-width="100" />
-              </el-table>
-            </div>
-
-            <div class="pagination-container">
-              <el-pagination
-                v-model:current-page="currentPage"
-                v-model:page-size="pageSize"
-                :page-sizes="[20, 50, 100, 200, 500]"
-                :total="tableData.length"
-                popper-style="z-index: 99999"
-                layout="total, sizes, prev, pager, next, jumper"
-                background
-                @size-change="handleSizeChange"
-                @current-change="handleCurrentChange"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <!-- 全屏模式（统一由 ChartFullscreenDialog 渲染：左图 + 右分页表格） -->
+    <ChartFullscreenDialog
+      v-model="isMaximized"
+      title="高频火点日期详情"
+      :option="option"
+      :columns="tableColumns"
+      :rows="tableData"
+    />
   </div>
 </template>
 
@@ -263,11 +147,11 @@ onUnmounted(() => {
     top: 0;
     right: 0;
     cursor: pointer;
-    color: var(--gis-text-muted, #94a3b8);
+    color: var(--fs-ink-500, var(--fs-ink-500));
     z-index: 10;
-    background: var(--gis-glass-solid);
-    border: 1px solid var(--gis-border);
-    border-radius: var(--gis-radius-xs, 4px);
+    background: var(--fs-bg-raised);
+    border: 1px solid var(--fs-hairline);
+    border-radius: var(--fs-r-xs, 4px);
     width: 24px;
     height: 24px;
     display: flex;
@@ -275,118 +159,14 @@ onUnmounted(() => {
     justify-content: center;
 
     &:hover {
-      background: var(--gis-accent-soft);
-      box-shadow: var(--gis-glow);
+      background: var(--fs-accent-soft);
+      box-shadow: var(--fs-e1);
     }
   }
 
   .chart-area {
     width: 100%;
     height: 100%;
-  }
-}
-
-.maximized-view {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  z-index: 2000;
-  background: var(--gis-atmo-bg);
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-
-  .header-bar {
-    padding-right: 20px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-    flex-shrink: 0;
-
-    .max-title {
-      font-size: 22px;
-      color: var(--gis-text, #f8fafc);
-      font-weight: 600;
-      letter-spacing: 0.04em;
-      text-shadow: var(--gis-text-glow);
-    }
-  }
-
-  .content-container {
-    flex: 1;
-    display: flex;
-    overflow: hidden;
-    gap: 20px;
-
-    .chart-area-max {
-      width: 40%;
-      height: 100%;
-      background: var(--gis-bg-panel);
-      border-radius: 2px;
-      border: 1px solid var(--gis-border);
-    }
-
-    .table-area {
-      flex: 1;
-      height: 100%;
-      background: #fff;
-      border-radius: 6px;
-      padding: 10px;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-
-      .table-content-wrapper {
-        flex: 1;
-        width: 100%;
-        position: relative;
-        overflow: hidden;
-      }
-
-      :deep(.el-table) {
-        border-radius: 6px;
-        overflow: hidden;
-        border: 1px solid #ebeef5;
-        --el-table-border-color: #ebeef5;
-        background-color: #fff;
-      }
-
-      :deep(.el-table .el-table__header-wrapper th) {
-        background: #f5f5f5;
-        font-weight: 500;
-        border-bottom: 1px solid #ebeef5;
-        color: #333;
-      }
-
-      :deep(.el-table--striped .el-table__body tr.el-table__row--striped td) {
-        background: #fafafa !important;
-      }
-
-      :deep(.el-table .el-table__body tr:hover > td) {
-        background: #f0f0f0 !important;
-      }
-
-      :deep(.el-table .cell) {
-        padding: 12px 16px;
-        font-size: 13px;
-        color: #333;
-      }
-
-      .pagination-container {
-        height: 70px;
-        flex-shrink: 0;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding-top: 5px;
-        padding-bottom: 25px;
-        padding-right: 20px;
-      }
-    }
   }
 }
 </style>

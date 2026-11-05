@@ -5,7 +5,6 @@
  * 所有大屏内容已迁移至 views/dashboard/index.vue
  * ============================================================================
  */
-import '@/style/common.css'
 import MainLayout from '@/layout/MainLayout.vue'
 </script>
 

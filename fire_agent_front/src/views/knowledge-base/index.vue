@@ -4,38 +4,78 @@
  *
  * 后端 API: /api/v1/rag/documents (GET/POST/DELETE)
  *          /api/v1/rag/ask (POST)
+ *
+ * 视觉 V6：按 docs/design/visual-v0.html §kb 屏全面重做展示层——
+ *   - 页头改 v0 page-head（64px 单行：标题 + 副题 + 右侧状态徽标）
+ *   - 左栏（340px）：文档库（kb-drop 投放 + kb-doc 条目）+ 问答历史（hist-item 卡片常驻）
+ *   - 右主区（居中 980px）：提问卡 kb-q → RAG 回答卡 kb-ans → 引用溯源 kb-cite
+ *   - 空态改 v0 empty（虚线发丝框）
+ * 状态机 + 数据请求（含流式解析）零改动。
  */
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import BackHomeButton from '@/components/base/BackHomeButton.vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import authFetch from '@/utils/authFetch'
-import { API_V1 } from '@/utils/config'
-import { speakState, speakText, recordState, startRecord, cleanupSpeech } from '@/utils/speech'
-
-// 语音提问：识别完成自动提交
-const handleMicClick = () => {
-  if (recordState.recording) {
-    startRecord() // 录音中再次调用 = 停止并识别
-    return
-  }
-  startRecord((text) => {
-    question.value = text
-    handleAsk()
-  })
-}
-
-const API_BASE = `${API_V1}/rag`
+import {
+  fetchDocuments as fetchDocumentsApi,
+  uploadDocument,
+  deleteDocument,
+  fetchDocumentContent,
+  fetchHistory,
+  fetchHistoryDetail,
+  deleteHistoryItem as deleteHistoryItemApi,
+  clearHistory as clearHistoryApi,
+} from '@/api/rag'
+import { useKbQa, cancelKbTask } from '@/composables/useKbQa'
+import { recordState, startRecord, cleanupSpeech } from '@/utils/speech'
+import KbDocsPanel from './KbDocsPanel.vue'
+import KbDocReader from './KbDocReader.vue'
+import KbQaInput from './KbQaInput.vue'
+import KbAnswerPanel from './KbAnswerPanel.vue'
+import KbTaskProcessDrawer from './KbTaskProcessDrawer.vue'
 
 // ====== 文档管理 ======
 const documents = ref([])
 const loadingDocs = ref(false)
 const uploadLoading = ref(false)
-const showDocs = ref(true) // 左侧文档管理面板展开/折叠
+// 上传进度：null=空闲；{ percent, phase: 'upload'|'process', filename }
+const uploadProgress = ref(null)
+
+// ====== 文档阅读（点击左栏文档条目） ======
+// PDF → 原件内嵌预览（KbDocReader 自行拉流）；其他类型 → 分片拼接文本
+const docReader = ref({ title: '', content: '', chunks: 0, loading: false, error: '', docId: null, fileType: '' })
+const isPdfDoc = (doc) => (doc.file_type || doc.title || '').toLowerCase().endsWith('.pdf') || (doc.file_type || '') === 'pdf'
+const openDocReader = async (doc) => {
+  if (isPdfDoc(doc)) {
+    docReader.value = { title: doc.title, content: '', chunks: doc.chunk_count || 0, loading: false, error: '', docId: doc.id, fileType: 'pdf' }
+    return
+  }
+  docReader.value = { title: doc.title, content: '', chunks: 0, loading: true, error: '', docId: doc.id, fileType: doc.file_type || '' }
+  try {
+    const json = await fetchDocumentContent(doc.id)
+    if (json.code === 200 && json.data) {
+      docReader.value = {
+        ...docReader.value,
+        title: json.data.title || doc.title,
+        content: json.data.content || '',
+        chunks: json.data.chunks || 0,
+        loading: false,
+        error: json.data.content ? '' : '该文档没有可读文本（可能提取失败）',
+      }
+    } else {
+      docReader.value = { ...docReader.value, loading: false, error: json.detail || json.message || '读取失败' }
+    }
+  } catch (e) {
+    docReader.value = { ...docReader.value, loading: false, error: e.message || '读取失败' }
+  }
+}
+const closeDocReader = () => {
+  docReader.value = { title: '', content: '', chunks: 0, loading: false, error: '', docId: null, fileType: '' }
+}
 
 const fetchDocuments = async () => {
   loadingDocs.value = true
   try {
-    const res = await authFetch(`${API_BASE}/documents`)
-    const json = await res.json()
+    const json = await fetchDocumentsApi()
     if (json.code === 200) {
       documents.value = json.data || []
     }
@@ -48,16 +88,21 @@ const fetchDocuments = async () => {
 
 const handleUpload = async (file) => {
   uploadLoading.value = true
+  const raw = file.raw || file
+  uploadProgress.value = { percent: 0, phase: 'upload', filename: file.name || raw.name }
   try {
     const formData = new FormData()
-    formData.append('file', file.raw || file)
+    formData.append('file', raw)
     formData.append('category', 'other')
 
-    const res = await authFetch(`${API_BASE}/documents`, {
-      method: 'POST',
-      body: formData,
+    const json = await uploadDocument(formData, (loaded, total) => {
+      // 字节上传进度；完成后切到「服务器解析索引中」不确定态
+      uploadProgress.value = {
+        percent: Math.round((loaded / total) * 100),
+        phase: loaded >= total ? 'process' : 'upload',
+        filename: file.name || raw.name,
+      }
     })
-    const json = await res.json()
     if (json.code === 200) {
       if (json.data && json.data.status === 'failed') {
         // 文档上传成功但文本提取失败（扫描件/无文字层），明确提醒用户
@@ -73,6 +118,7 @@ const handleUpload = async (file) => {
     ElMessage.error('上传失败: ' + e.message)
   } finally {
     uploadLoading.value = false
+    uploadProgress.value = null
   }
 }
 
@@ -83,10 +129,7 @@ const handleDelete = async (doc) => {
       cancelButtonText: '取消',
       type: 'warning',
     })
-    const res = await authFetch(`${API_BASE}/documents/${doc.id}`, {
-      method: 'DELETE',
-    })
-    const json = await res.json()
+    const json = await deleteDocument(doc.id)
     if (json.code === 200) {
       ElMessage.success('删除成功')
       await fetchDocuments()
@@ -96,87 +139,35 @@ const handleDelete = async (doc) => {
   }
 }
 
-// ====== RAG 问答 ======
-const question = ref('')
-const asking = ref(false)
-const answerResult = ref(null)
-const activeSource = ref(null)
-// P2#18：流式增量缓冲（半截内容不落库，done 后以完整结果为准）
-const streamAnswer = ref('')
-const streamMeta = ref(null)
+// ====== RAG 问答（状态在 useKbQa 模块单例：切页/返回不丢进度，流式继续打字） ======
+const {
+  question, asking, answerResult, streamAnswer, streamMeta, streamThink, kbTasks, askQuestion,
+} = useKbQa({ onFinished: () => loadHistory() })
 
-const handleAsk = async () => {
-  const q = question.value.trim()
-  if (!q) {
-    ElMessage.warning('请输入问题')
+// 页头徽标：展示真实回答模型（随 result 更新），无回答时不硬编码模型名
+const headBadge = computed(() => {
+  if (!answerResult.value) return '流式回答 · 向量检索就绪'
+  if (!answerResult.value.llm_used) return '关键词·向量检索'
+  return `${answerResult.value.llm_model || 'LLM'} · 流式回答`
+})
+
+const handleAsk = askQuestion
+
+// ====== 语音提问：识别完成自动提交 ======
+const handleMicClick = () => {
+  if (recordState.recording) {
+    startRecord() // 录音中再次调用 = 停止并识别
     return
   }
+  startRecord((text) => {
+    question.value = text
+    handleAsk()
+  })
+}
 
-  asking.value = true
-  answerResult.value = null
-  activeSource.value = null
-  streamAnswer.value = ''
-  streamMeta.value = null
-
-  try {
-    // P2#18：优先走流式接口（SSE；EventSource 不支持 POST，用 fetch reader 解析）
-    const res = await authFetch(`${API_BASE}/ask/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: q, top_k: 5 }),
-    })
-    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
-
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buf = ''
-    for (;;) {
-      const { value, done } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      const frames = buf.split('\n\n')
-      buf = frames.pop() || ''
-      for (const frame of frames) {
-        const line = frame.split('\n').find(l => l.startsWith('data: '))
-        if (!line) continue
-        let ev
-        try { ev = JSON.parse(line.slice(6)) } catch { continue }
-        if (ev.type === 'meta') {
-          streamMeta.value = ev.retrieval || null   // 检索元信息先行渲染
-        } else if (ev.type === 'delta') {
-          streamAnswer.value += ev.text || ''       // 回答增量打字机
-        } else if (ev.type === 'done') {
-          answerResult.value = ev.result            // 终态完整结果（与 /ask 契约一致）
-        } else if (ev.type === 'error') {
-          throw new Error(ev.message || '流式回答失败')
-        }
-      }
-    }
-    if (!answerResult.value) throw new Error('流式回答未返回结果')
-    loadHistory()
-  } catch (e) {
-    // 流式失败/不支持 → 回退非流式接口，保证总能拿到回答
-    try {
-      const res = await authFetch(`${API_BASE}/ask`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q, top_k: 5 }),
-      })
-      const json = await res.json()
-      if (json.code === 200) {
-        answerResult.value = json.data
-        loadHistory()
-      } else {
-        ElMessage.error('查询失败: ' + (json.detail || json.message))
-      }
-    } catch (e2) {
-      ElMessage.error('网络错误: ' + (e2.message || e.message || e2))
-    }
-  } finally {
-    asking.value = false
-    streamAnswer.value = ''
-    streamMeta.value = null
-  }
+const handleExample = (ex) => {
+  question.value = ex
+  handleAsk()
 }
 
 // ====== 问答历史（后端数据库持久化，按用户隔离） ======
@@ -184,8 +175,7 @@ const askHistory = ref([])
 
 const loadHistory = async () => {
   try {
-    const res = await authFetch(`${API_BASE}/history`)
-    const json = await res.json()
+    const json = await fetchHistory()
     if (json.code === 200) {
       askHistory.value = json.data || []
     }
@@ -198,8 +188,7 @@ const loadHistory = async () => {
 const handleHistoryClick = async (item) => {
   question.value = item.text
   try {
-    const res = await authFetch(`${API_BASE}/history/${item.id}`)
-    const json = await res.json()
+    const json = await fetchHistoryDetail(item.id)
     if (json.code === 200 && json.data.result) {
       answerResult.value = json.data.result
       return
@@ -213,8 +202,7 @@ const handleHistoryClick = async (item) => {
 
 const deleteHistoryItem = async (item) => {
   try {
-    const res = await authFetch(`${API_BASE}/history/${item.id}`, { method: 'DELETE' })
-    const json = await res.json()
+    const json = await deleteHistoryItemApi(item.id)
     if (json.code === 200) {
       askHistory.value = askHistory.value.filter(h => h.id !== item.id)
     }
@@ -225,8 +213,7 @@ const deleteHistoryItem = async (item) => {
 
 const clearHistory = async () => {
   try {
-    const res = await authFetch(`${API_BASE}/history`, { method: 'DELETE' })
-    const json = await res.json()
+    const json = await clearHistoryApi()
     if (json.code === 200) {
       askHistory.value = []
       ElMessage.success('历史已清空')
@@ -236,34 +223,23 @@ const clearHistory = async () => {
   }
 }
 
-const handleKeydown = (e) => {
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-    handleAsk()
-  }
+// ====== 问答任务进程（页头入口 → 抽屉，对齐 Agent 中心「任务进程」交互） ======
+const taskDrawer = ref(false)
+const openTaskDrawer = () => {
+  loadHistory() // 打开时刷新一次，反映最新存档
+  taskDrawer.value = true
 }
-
-// ====== 示例问题 ======
-const exampleQuestions = [
-  '森林火险等级如何划分？',
-  '4级火险应该采取什么措施？',
-  '林区封山的条件是什么？',
-]
-
-const handleExample = (ex) => {
-  question.value = ex
-  handleAsk()
+// 查看 → 回显存档回答并收起抽屉；终止/删除/清空走 useKbQa 与历史接口
+const viewTask = (item) => {
+  handleHistoryClick(item)
+  taskDrawer.value = false
 }
-
-// 检索方式中文标签
-const retrievalMethodLabel = (m) => {
-  const map = {
-    hybrid: '向量 + 关键词混合',
-    vector: '向量语义',
-    keyword: '关键词匹配',
-    none: '未命中',
-  }
-  return map[m] || m
+const onCancelTask = (t) => {
+  cancelKbTask(t.key)
+  ElMessage.success('已终止该问答任务')
 }
+// 进行中任务数（页头徽标点亮）
+const runningCount = computed(() => kbTasks.value.filter(t => t.status === 'running').length)
 
 // ====== 初始化 ======
 onMounted(() => {
@@ -276,1087 +252,348 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="kb-shell">
-    <!-- 页头卡（sc-datav TitleWrapper 同构：强调竖条 + 标题 + 英文角标） -->
-    <header class="kb-header">
-      <div class="kb-header-left">
-        <h1 class="kb-title">知识库</h1>
-        <p class="kb-subtitle">上传森林防火知识文档，进行智能检索与问答</p>
-        <p class="datav-en">Knowledge Base · RAG Retrieval</p>
+  <div class="kb-page">
+    <!-- ===== 页头（v0 page-head 同构：64px 单行） ===== -->
+    <header class="kb-head">
+      <div class="kb-head__t">
+        <h1 class="kb-head__h1">知识库</h1>
+        <p class="kb-head__sub">文档上传 · RAG 检索问答 · 引用溯源</p>
       </div>
+      <BackHomeButton />
+      <span class="kb-head__sp"></span>
+      <!-- 问答任务进程入口（对齐 Agent 中心「任务进程」）：抽屉承载进行中任务与全部存档 -->
+      <button class="kb-head__tasks" title="问答任务进程：实时进度 / 终止 / 查看存档 / 删除" @click="openTaskDrawer">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h8v13H6z"/><path d="M8.2 7h3.6M8.2 10h3.6"/><path d="M9 13.5h2"/></svg>
+        任务进程
+        <span v-if="runningCount" class="kb-head__tasks-n is-live mono">{{ runningCount }}</span>
+        <span v-else-if="askHistory.length" class="kb-head__tasks-n mono">{{ askHistory.length }}</span>
+      </button>
+      <span class="kb-head__badge mono">{{ headBadge }}</span>
+      <span class="kb-head__live"><i class="kb-head__dot"></i>向量检索 就绪</span>
     </header>
 
+    <!-- ===== 主体：左栏（文档库 + 历史）/ 右主区（提问 → 回答 → 引用） ===== -->
     <div class="kb-body">
-      <!-- 左侧：文档管理 + 问答历史 -->
-      <aside class="kb-docs" :class="{ expanded: showDocs }">
-        <div class="docs-header" @click="showDocs = !showDocs" title="点击展开/收起">
-          <span class="docs-title">文档管理</span>
-          <span class="docs-en">Documents</span>
-          <span class="docs-count">{{ documents.length }}</span>
-        </div>
-
-        <!-- 上传 -->
-        <div v-if="showDocs" class="upload-area">
-          <el-upload
-            drag
-            :auto-upload="false"
-            :show-file-list="false"
-            accept=".pdf,.txt,.md"
-            :on-change="handleUpload"
-          >
-            <div class="upload-inner">
-              <div class="upload-icon">+</div>
-              <div class="upload-text">拖拽或点击上传文档</div>
-              <div class="upload-hint">支持 PDF / TXT / MD</div>
-            </div>
-          </el-upload>
-        </div>
-
-        <!-- 文档列表 -->
-        <div v-if="showDocs" class="docs-list" v-loading="loadingDocs">
-          <div v-if="documents.length === 0" class="docs-empty">
-            暂无文档，请上传
-          </div>
-          <div
-            v-for="doc in documents"
-            :key="doc.id"
-            class="doc-item"
-          >
-            <div class="doc-info">
-              <div class="doc-name">{{ doc.title }}</div>
-              <div class="doc-meta">
-                <span class="doc-status" :class="doc.status">{{ doc.status }}</span>
-                <span class="doc-type">{{ doc.category }}</span>
-              </div>
-            </div>
-            <button
-              class="doc-delete"
-              title="删除"
-              @click.stop="handleDelete(doc)"
-            >×</button>
-          </div>
-        </div>
-
-        <!-- 问答历史 -->
-        <div class="docs-header history-toggle" title="问答历史">
-          <span class="docs-title">问答历史</span>
-          <span class="docs-en">History</span>
-          <span class="docs-count">{{ askHistory.length }}</span>
-        </div>
-        <div v-if="showDocs" class="history-list">
-          <div v-if="askHistory.length === 0" class="docs-empty">
-            暂无提问记录
-          </div>
-          <div
-            v-for="item in askHistory"
-            :key="item.id"
-            class="history-item"
-            :class="{ active: item.text === question && answerResult }"
-            @click="handleHistoryClick(item)"
-          >
-            <button
-              class="doc-delete"
-              title="删除"
-              @click.stop="deleteHistoryItem(item)"
-            >×</button>
-            <div class="history-text">{{ item.text }}</div>
-            <div class="history-meta">
-              <span class="history-time">{{ item.time }}</span>
-              <span class="history-method" :class="{ ok: item.matched > 0 }">
-                {{ item.matched > 0 ? `命中 ${item.matched} 片段` : '未命中' }}
-              </span>
-            </div>
-          </div>
-          <button v-if="askHistory.length > 0" class="history-clear" @click="clearHistory">
-            清空历史
-          </button>
+      <!-- 左栏 -->
+      <aside class="kb-side">
+        <div class="kb-side__scroll">
+          <KbDocsPanel
+            :documents="documents"
+            :loading-docs="loadingDocs"
+            :upload-progress="uploadProgress"
+            :ask-history="askHistory"
+            :question="question"
+            :answer-result="answerResult"
+            @upload="handleUpload"
+            @open-doc="openDocReader"
+            @delete-doc="handleDelete"
+            @history-click="handleHistoryClick"
+            @history-delete="deleteHistoryItem"
+            @history-clear="clearHistory"
+          />
         </div>
       </aside>
 
-      <!-- 右侧：RAG 问答 -->
-      <div class="kb-qa">
-        <!-- 输入区 -->
-        <div class="qa-input-area">
-          <div class="qa-input-row">
-            <el-input
-              v-model="question"
-              type="textarea"
-              :rows="2"
-              placeholder="输入关于森林防火的问题..."
-              class="qa-input"
-              @keydown="handleKeydown"
-            />
-            <el-button
-              type="primary"
-              :loading="asking"
-              @click="handleAsk"
-              class="qa-btn"
-            >
-              提问
-            </el-button>
-            <el-button
-              :type="recordState.recording ? 'danger' : 'default'"
-              :title="recordState.recording ? '停止录音并识别' : '语音提问'"
-              class="qa-mic-btn"
-              @click="handleMicClick"
-            >
-              {{ recordState.recording ? '■ 停止' : '🎤' }}
-            </el-button>
-          </div>
-          <div class="qa-examples">
-            <span class="qa-example-label">示例：</span>
-            <span
-              v-for="(ex, i) in exampleQuestions"
-              :key="i"
-              class="qa-example-tag"
-              @click="handleExample(ex)"
-            >{{ ex }}</span>
-          </div>
-          <div class="qa-hint">Ctrl+Enter 快速提问</div>
-        </div>
+      <!-- 右主区 -->
+      <div class="kb-main">
+        <div class="kb-main__scroll">
+          <!-- 提问卡 -->
+          <KbQaInput
+            v-model="question"
+            :asking="asking"
+            :recording="recordState.recording"
+            @ask="handleAsk"
+            @mic="handleMicClick"
+            @example="handleExample"
+          />
 
-        <!-- P2#18：回答流式生成中（打字机增量；来源引用在流结束后随 done 附上） -->
-        <div v-if="asking && streamAnswer" class="qa-result">
-          <div class="qa-answer">
-            <div class="qa-answer-header">
-              <span class="qa-answer-badge">RagAgent 回答</span>
-              <span class="qa-stream-badge">生成中</span>
-            </div>
-            <div class="qa-answer-content">{{ streamAnswer }}<span class="stream-cursor">▌</span></div>
-          </div>
-        </div>
+          <!-- 回答区（检索过程 → 思考/流式 → 终态回答 → 引用溯源） -->
+          <KbAnswerPanel
+            v-if="answerResult || streamAnswer || streamThink"
+            :result="answerResult"
+            :stream-text="streamAnswer"
+            :stream-meta="streamMeta"
+            :stream-think="streamThink"
+            :asking="asking"
+          />
 
-        <!-- 回答区 -->
-      <div v-if="answerResult" class="qa-result">
-        <!-- 回答正文 -->
-        <div class="qa-answer">
-          <div class="qa-answer-header">
-            <span class="qa-answer-badge">RagAgent 回答</span>
-            <span v-if="answerResult.llm_used" class="qa-llm-badge">LLM 增强</span>
-            <span v-else class="qa-fallback-badge">关键词/向量检索</span>
-            <el-button
-              size="small"
-              class="qa-speak-btn"
-              :loading="speakState.loading"
-              :type="speakState.speaking || speakState.loading ? 'danger' : 'default'"
-              plain
-              title="语音播报回答"
-              @click="speakText(answerResult.answer)"
-            >{{ speakState.speaking || speakState.loading ? '停止' : '🔊 播报' }}</el-button>
+          <!-- 空态（v0 empty：虚线发丝框） -->
+          <div v-else class="kb-empty">
+            <svg class="kb-empty__ic" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 6.5 10 3l6 3.5v7L10 17l-6-3.5z"/><path d="M10 10v7"/><path d="m4 6.5 6 3.5 6-3.5"/>
+            </svg>
+            上传知识库文档后，输入问题获取智能回答
+            <span class="kb-empty__hint">回答基于文档检索生成，附带引用溯源可点击展开原文</span>
+            <button class="kb-empty__btn" @click="handleMicClick">
+              {{ recordState.recording ? '停止录音' : '试试语音提问' }}
+            </button>
           </div>
-          <div class="qa-answer-content">{{ answerResult.answer }}</div>
-        </div>
-
-        <!-- RagAgent 检索过程 -->
-        <div v-if="answerResult.retrieval" class="qa-retrieval">
-          <div class="qa-ref-header">
-            <span class="qa-ref-title">RagAgent 检索过程<span class="title-en">Retrieval</span></span>
-          </div>
-          <div class="qa-retrieval-body">
-            <div class="qr-stat">
-              <span class="qr-item">
-                检索分片：<b>{{ answerResult.retrieval.total_chunks }}</b> 个
-              </span>
-              <span class="qr-item">
-                命中片段：<b :class="answerResult.retrieval.matched_chunks > 0 ? 'ok' : 'fail'">
-                  {{ answerResult.retrieval.matched_chunks }}
-                </b> 个
-              </span>
-              <span class="qr-item">
-                检索方式：<b>{{ retrievalMethodLabel(answerResult.retrieval.method) }}</b>
-              </span>
-              <span class="qr-item" v-if="answerResult.retrieval.vector_enabled">
-                <span class="dot dot-ok"></span>向量检索已启用
-              </span>
-              <span class="qr-item" v-else>
-                <span class="dot dot-off"></span>向量不可用（仅关键词）
-              </span>
-            </div>
-            <div v-if="answerResult.retrieval.keywords && answerResult.retrieval.keywords.length" class="qr-keywords">
-              <span class="qr-kw-label">提取关键词：</span>
-              <span v-for="(kw, i) in answerResult.retrieval.keywords" :key="i" class="qr-kw">{{ kw }}</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 引用来源 -->
-        <div
-          v-if="answerResult.references && answerResult.references.length > 0"
-          class="qa-references"
-        >
-          <div class="qa-ref-header">
-            <span class="qa-ref-title">引用来源（{{ answerResult.references.length }}）<span class="title-en">References</span></span>
-          </div>
-          <div class="qa-ref-list">
-            <div
-              v-for="(ref, i) in answerResult.references"
-              :key="i"
-              class="qa-ref-item"
-              :class="{ active: activeSource === i }"
-              @click="activeSource = activeSource === i ? null : i"
-            >
-              <div class="qa-ref-index">[{{ i + 1 }}]</div>
-              <div class="qa-ref-body">
-                <div class="qa-ref-doc">{{ ref.document_title || '未知文档' }}</div>
-                <div class="qa-ref-content">{{ ref.content }}</div>
-                <div class="qa-ref-scores">
-                  <span class="qa-ref-score">相关性: {{ ref.score }}</span>
-                  <span v-if="ref.vector_score !== undefined" class="qa-ref-score sub">向量: {{ ref.vector_score }}</span>
-                  <span v-if="ref.keyword_score !== undefined" class="qa-ref-score sub">关键词: {{ ref.keyword_score }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 检索为空提示 -->
-        <div v-else class="qa-no-match">
-          RagAgent 在知识库中未找到相关片段，请先上传与问题相关的文档。
-        </div>
-      </div>
-
-        <!-- 空状态 -->
-        <div v-else class="qa-empty">
-          <div class="qa-empty-icon">?</div>
-          <p class="qa-empty-text">上传知识库文档后，输入问题获取智能回答</p>
         </div>
       </div>
     </div>
+
+    <!-- 文档阅读浮层（点击左栏文档条目弹出） -->
+    <KbDocReader
+      v-if="docReader.loading || docReader.error || docReader.content || docReader.docId"
+      :doc-id="docReader.docId"
+      :file-type="docReader.fileType"
+      :title="docReader.title"
+      :content="docReader.content"
+      :chunks="docReader.chunks"
+      :loading="docReader.loading"
+      :error="docReader.error"
+      @close="closeDocReader"
+    />
+
+    <!-- 问答任务进程抽屉（进行中：实时阶段/终止；已结束：存档查看/删除/清空） -->
+    <KbTaskProcessDrawer
+      v-model="taskDrawer"
+      :tasks="kbTasks"
+      :history="askHistory"
+      @cancel="onCancelTask"
+      @view="viewTask"
+      @delete="deleteHistoryItem"
+      @clear="clearHistory"
+    />
   </div>
 </template>
 
 <style scoped>
-.kb-shell {
-  position: relative;
+.kb-page {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 20px 24px;
-  background: var(--gis-atmo-bg);
-  color: var(--gis-text, #f8fafc);
+  background: var(--fs-bg-canvas);
+  /* 指挥台网格底纹（hairline 级，随亮暗主题取色） */
+  background-image:
+    linear-gradient(rgba(var(--fs-ink-900-rgb), 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--fs-ink-900-rgb), 0.025) 1px, transparent 1px);
+  background-size: 48px 48px;
+  color: var(--fs-ink-900);
   overflow: hidden;
 }
 
-/* ====== 页头卡（sc-datav TitleWrapper 同构） ====== */
-.kb-header {
+/* ===== 页头（v0 page-head） ===== */
+.kb-head {
   flex-shrink: 0;
+  height: var(--fs-topbar-h, 64px);
+  padding: 0 24px;
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
-  padding: 12px 20px;
-  background: var(--gis-glass);
-  backdrop-filter: blur(var(--gis-glass-blur)) saturate(var(--gis-glass-saturate));
-  border: 1px solid var(--gis-glass-border);
-  box-shadow: inset 0 1px 0 var(--gis-glass-highlight);
-  border-radius: var(--gis-radius-md, 10px);
+  background: var(--fs-bg-surface);
+  border-bottom: 1px solid var(--fs-hairline);
 }
-
-/* sc-datav 标题签名：左侧强调竖条 */
-.kb-header::before {
-  content: '';
-  width: 3px;
-  height: 26px;
-  border-radius: 2px;
-  background: var(--gis-accent, #0ea5e9);
-  box-shadow: var(--gis-glow);
-  flex-shrink: 0;
-}
-
-.kb-header-left {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.kb-title {
+.kb-head__t { min-width: 0; }
+.kb-head__h1 {
   margin: 0;
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 600;
-  color: var(--gis-text, #f8fafc);
-  letter-spacing: 0.02em;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  color: var(--fs-ink-900);
 }
-
-.kb-subtitle {
-  margin: 4px 0 0;
+.kb-head__sub {
+  margin: 2px 0 0;
   font-size: 12px;
-  color: var(--gis-text-muted, #94a3b8);
+  color: var(--fs-ink-500);
 }
-
-.kb-body {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  gap: 16px;
-}
-
-/* ====== 左侧：文档管理 ====== */
-.kb-docs {
-  flex-shrink: 0;
-  width: 56px;
-  display: flex;
-  flex-direction: column;
-  background: var(--gis-glass);
-  backdrop-filter: blur(var(--gis-glass-blur)) saturate(var(--gis-glass-saturate));
-  border: 1px solid var(--gis-glass-border);
-  box-shadow: inset 0 1px 0 var(--gis-glass-highlight);
-  border-radius: var(--gis-radius-md, 10px);
-  overflow: hidden;
-  transition: width 0.2s ease;
-}
-
-.kb-docs.expanded {
-  width: 280px;
-}
-
-.docs-header {
-  display: flex;
+.kb-head__sp { flex: 1; }
+/* 问答任务管理入口（页头按钮，参考 Agent 中心"任务进程"） */
+.kb-head__tasks {
+  height: 30px;
+  padding: 0 11px;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 12px 8px;
-  border-bottom: 1px solid var(--gis-border, #334155);
-  flex-shrink: 0;
-  cursor: pointer;
-  user-select: none;
-}
-
-/* sc-datav 标题签名：左侧强调竖条 */
-.docs-header::before {
-  content: '';
-  width: 3px;
-  height: 12px;
-  border-radius: 2px;
-  background: var(--gis-accent, #0ea5e9);
-  flex-shrink: 0;
-}
-
-/* 英文角标（展开态显示，右缀） */
-.docs-en {
-  display: none;
-  margin-left: auto;
-  font-size: 8px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--gis-text-muted, #94a3b8);
-  font-family: ui-monospace, "Consolas", monospace;
-  white-space: nowrap;
-}
-
-.kb-docs.expanded .docs-en {
-  display: inline;
-}
-
-.docs-header:hover {
-  background: rgba(34, 211, 238, 0.06);
-}
-
-.docs-title {
-  display: none;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--gis-text, #f8fafc);
-  letter-spacing: 0.04em;
-}
-
-.kb-docs.expanded .docs-title {
-  display: inline;
-}
-
-.docs-count {
-  flex-shrink: 0;
-  font-size: 10px;
-  padding: 1px 6px;
-  background: var(--gis-accent, #0ea5e9);
-  color: var(--gis-on-accent, #020617);
-  border-radius: 8px;
-  font-weight: 700;
-}
-
-/* 上传区域 */
-.upload-area {
-  flex-shrink: 0;
-  padding: 10px;
-  border-bottom: 1px solid var(--gis-border, #334155);
-}
-
-.upload-area :deep(.el-upload-dragger) {
-  background: var(--gis-mask, rgba(2, 6, 23, 0.6)) !important;
-  border: 1px dashed var(--gis-border, #334155) !important;
-  border-radius: 3px;
-  padding: 16px;
-  height: auto;
-  transition: border-color 0.15s;
-}
-
-.upload-area :deep(.el-upload-dragger:hover) {
-  border-color: var(--gis-accent, #0ea5e9) !important;
-}
-
-.upload-inner {
-  text-align: center;
-}
-
-.upload-icon {
-  font-size: 24px;
-  font-weight: 300;
-  color: var(--gis-accent, #0ea5e9);
-  line-height: 1;
-  margin-bottom: 4px;
-}
-
-.upload-text {
-  font-size: 11px;
-  color: var(--gis-text, #f8fafc);
-  line-height: 1.4;
-}
-
-.upload-hint {
-  font-size: 9px;
-  color: var(--gis-text-muted, #64748b);
-  margin-top: 2px;
-}
-
-/* 文档列表 */
-.docs-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 8px;
-}
-
-/* ====== 问答历史 ====== */
-.history-toggle {
-  cursor: default;
-  border-top: 1px solid var(--gis-border, #334155);
-}
-
-.history-list {
-  flex-shrink: 0;
-  max-height: 240px;
-  overflow-y: auto;
-  padding: 8px;
-}
-
-.history-item {
-  position: relative;
-  padding: 7px 24px 7px 10px;
-  border-radius: 3px;
-  margin-bottom: 4px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.history-item:hover,
-.history-item.active {
-  background: rgba(34, 211, 238, 0.08);
-}
-
-.history-item .doc-delete {
-  position: absolute;
-  top: 5px;
-  right: 2px;
-}
-
-.history-text {
-  font-size: 11px;
-  color: var(--gis-text, #f8fafc);
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  line-clamp: 2;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
-.history-meta {
-  display: flex;
-  justify-content: space-between;
   gap: 6px;
-  margin-top: 3px;
-}
-
-.history-time {
-  font-size: 9px;
-  color: var(--gis-text-muted, #64748b);
-  font-family: ui-monospace, "Consolas", monospace;
-}
-
-.history-method {
-  font-size: 9px;
-  color: var(--gis-text-muted, #94a3b8);
-}
-
-.history-method.ok {
-  color: #4ade80;
-}
-
-.history-clear {
-  display: block;
-  width: 100%;
-  margin-top: 6px;
-  padding: 5px 0;
-  font-size: 10px;
-  color: var(--gis-text-muted, #94a3b8);
-  background: transparent;
-  border: 1px dashed var(--gis-border, #334155);
-  border-radius: 3px;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
-}
-
-.history-clear:hover {
-  color: #ef4444;
-  border-color: rgba(239, 68, 68, 0.5);
-}
-
-.docs-empty {
-  padding: 30px 0;
-  text-align: center;
-  font-size: 11px;
-  color: var(--gis-text-muted, #64748b);
-}
-
-.doc-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 3px;
-  margin-bottom: 4px;
-  transition: background 0.15s;
-}
-
-.doc-item:hover {
-  background: rgba(34, 211, 238, 0.06);
-}
-
-.doc-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.doc-name {
-  font-size: 11px;
-  color: var(--gis-text, #f8fafc);
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.doc-meta {
-  display: flex;
-  gap: 6px;
-  margin-top: 3px;
-}
-
-.doc-status {
-  font-size: 9px;
-  padding: 0 4px;
-  border-radius: 2px;
-  text-transform: uppercase;
-}
-
-.doc-status.ready {
-  color: #4ade80;
-  background: rgba(74, 222, 128, 0.1);
-}
-
-.doc-status.processing {
-  color: #facc15;
-  background: rgba(250, 204, 21, 0.1);
-}
-
-.doc-status.failed {
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.1);
-}
-
-.doc-type {
-  font-size: 9px;
-  color: var(--gis-text-muted, #64748b);
-}
-
-.doc-delete {
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  color: var(--gis-text-muted, #64748b);
-  background: transparent;
   border: none;
-  border-radius: 2px;
-  cursor: pointer;
-  transition: color 0.15s, background 0.15s;
-}
-
-.doc-delete:hover {
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.1);
-}
-
-/* ====== 右侧：RAG 问答 ====== */
-.kb-qa {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  gap: 12px;
-  overflow-y: auto; /* 外层滚动：整列内容超高时往下滚，左侧文档/历史面板保持不动（与 Agent 中心一致） */
-}
-
-/* 输入区 */
-.qa-input-area {
-  flex-shrink: 0;
-  background: var(--gis-glass);
-  backdrop-filter: blur(var(--gis-glass-blur)) saturate(var(--gis-glass-saturate));
-  border: 1px solid var(--gis-glass-border);
-  box-shadow: inset 0 1px 0 var(--gis-glass-highlight);
-  border-radius: var(--gis-radius-md, 10px);
-  padding: 14px 16px;
-}
-
-.qa-input-row {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
-
-.qa-input {
-  flex: 1;
-}
-
-.qa-input :deep(.el-textarea__inner) {
-  background: var(--gis-bg-deep, #020617) !important;
-  color: var(--gis-text, #f8fafc) !important;
-  border: 1px solid var(--gis-border, #334155) !important;
-  border-radius: 3px;
-  font-size: 13px;
-  line-height: 1.6;
-  resize: vertical;
-}
-
-.qa-input :deep(.el-textarea__inner:focus) {
-  border-color: var(--gis-accent, #0ea5e9) !important;
-  box-shadow: 0 0 0 2px var(--gis-accent-soft, rgba(34, 211, 238, 0.15)) !important;
-}
-
-.qa-btn {
-  flex-shrink: 0;
-  height: 74px;
-  min-width: 80px;
-  background: var(--gis-metal-accent) !important;
-  border: none !important;
-  color: var(--gis-on-accent, #020617) !important;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  transition: filter 0.15s, box-shadow 0.15s;
-}
-
-.qa-btn:hover {
-  filter: brightness(1.1) !important;
-  box-shadow: var(--gis-glow-strong) !important;
-}
-
-.qa-examples {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 10px;
-  flex-wrap: wrap;
-}
-
-.qa-example-label {
-  font-size: 11px;
-  color: var(--gis-text-muted, #64748b);
-  flex-shrink: 0;
-}
-
-.qa-example-tag {
-  font-size: 11px;
-  padding: 2px 8px;
-  color: var(--gis-accent, #0ea5e9);
-  background: rgba(34, 211, 238, 0.1);
-  border: 1px solid rgba(34, 211, 238, 0.2);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: background 0.15s;
-  white-space: nowrap;
-}
-
-.qa-example-tag:hover {
-  background: rgba(34, 211, 238, 0.2);
-}
-
-.qa-hint {
-  margin-top: 6px;
-  font-size: 10px;
-  color: var(--gis-text-muted, #64748b);
-  font-family: ui-monospace, "Consolas", monospace;
-}
-
-/* 回答区 */
-/* 语音按钮 */
-.qa-mic-btn {
-  flex-shrink: 0;
-  height: 62px;
-  min-width: 56px;
-  font-size: 17px;
-}
-.qa-mic-btn.is-danger {
-  animation: qa-mic-pulse 1.2s ease-in-out infinite;
-}
-@keyframes qa-mic-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
-}
-.qa-speak-btn {
-  margin-left: auto;
-}
-.qa-result {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  gap: 10px;
-}
-
-/* 回答正文 */
-.qa-answer {
-  background: var(--gis-glass);
-  backdrop-filter: blur(var(--gis-glass-blur)) saturate(var(--gis-glass-saturate));
-  border: 1px solid var(--gis-glass-border);
-  border-left: 3px solid var(--gis-accent, #0ea5e9);
-  border-radius: var(--gis-radius-md, 10px);
-  box-shadow: inset 0 1px 0 var(--gis-glass-highlight);
-  padding: 14px 16px;
-  flex-shrink: 0;
-}
-
-.qa-answer-header {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 10px;
-}
-
-.qa-answer-badge {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 1px 8px;
-  background: var(--gis-accent, #0ea5e9);
-  color: var(--gis-on-accent, #020617);
-  border-radius: 2px;
-  letter-spacing: 0.04em;
-}
-
-.qa-llm-badge {
-  font-size: 9px;
-  padding: 1px 6px;
-  background: rgba(74, 222, 128, 0.15);
-  color: #4ade80;
-  border-radius: 2px;
-  border: 1px solid rgba(74, 222, 128, 0.3);
-}
-
-.qa-fallback-badge {
-  font-size: 9px;
-  padding: 1px 6px;
-  background: rgba(250, 204, 21, 0.15);
-  color: #facc15;
-  border-radius: 2px;
-  border: 1px solid rgba(250, 204, 21, 0.3);
-}
-
-.qa-answer-content {
-  font-size: 13px;
-  line-height: 1.7;
-  color: var(--gis-text, #f8fafc);
-  white-space: pre-wrap;
-}
-
-/* P2#18 流式回答 */
-.qa-stream-badge {
-  padding: 1px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.12);
-  border: 1px solid rgba(56, 189, 248, 0.35);
-  animation: qa-stream-pulse 1.2s ease-in-out infinite;
-}
-
-.stream-cursor {
-  display: inline-block;
-  color: #38bdf8;
-  animation: qa-stream-blink 1s step-start infinite;
-}
-
-@keyframes qa-stream-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
-}
-
-@keyframes qa-stream-blink {
-  50% { opacity: 0; }
-}
-
-/* 引用来源 */
-.qa-references {
-  flex: 1 1 auto;
-  min-height: 480px; /* 引用区最小高度（与 Agent 中心报告区一致），配合外层滚动条展示更多内容 */
-  background: var(--gis-glass);
-  backdrop-filter: blur(var(--gis-glass-blur)) saturate(var(--gis-glass-saturate));
-  border: 1px solid var(--gis-glass-border);
-  border-radius: var(--gis-radius-md, 10px);
-  box-shadow: inset 0 1px 0 var(--gis-glass-highlight);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.qa-ref-header {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--gis-border, #334155);
-  flex-shrink: 0;
-}
-
-/* 引用列表内部独立滚动（修复来源被截断看不到的问题） */
-.qa-ref-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.qa-ref-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--gis-text, #f8fafc);
-  letter-spacing: 0.04em;
-}
-
-/* 卡片标题英文角标（sc-datav CardTitle 右缀英文） */
-.title-en {
-  font-size: 8px;
-  font-weight: 400;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--gis-text-muted, #94a3b8);
-  opacity: 0.85;
-  font-family: ui-monospace, "Consolas", monospace;
-  white-space: nowrap;
-}
-
-.qa-ref-item {
-  display: flex;
-  gap: 10px;
-  padding: 10px 14px;
-  cursor: pointer;
-  transition: background 0.15s;
-  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
-}
-
-.qa-ref-item:last-child {
-  border-bottom: none;
-}
-
-.qa-ref-item:hover,
-.qa-ref-item.active {
-  background: rgba(34, 211, 238, 0.06);
-}
-
-.qa-ref-index {
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--gis-accent, #0ea5e9);
-  font-family: ui-monospace, "Consolas", monospace;
-  width: 24px;
-}
-
-.qa-ref-body {
-  flex: 1;
-  min-width: 0;
-}
-
-.qa-ref-content {
+  border-radius: var(--fs-r-sm, 6px);
+  background: var(--fs-accent-soft);
+  color: var(--fs-accent);
   font-size: 12px;
-  color: var(--gis-text, #f8fafc);
-  line-height: 1.5;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  line-clamp: 3;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--fs-dur-micro) var(--fs-ease),
+    color var(--fs-dur-micro) var(--fs-ease),
+    box-shadow var(--fs-dur-micro) var(--fs-ease),
+    transform var(--fs-dur-micro) var(--fs-ease);
 }
-
-.qa-ref-item.active .qa-ref-content {
-  -webkit-line-clamp: unset;
-  line-clamp: unset;
-}
-
-.qa-ref-score {
-  font-size: 10px;
-  color: var(--gis-text-muted, #64748b);
-  margin-top: 3px;
-  font-family: ui-monospace, "Consolas", monospace;
-}
-
-/* RagAgent 检索过程 */
-.qa-retrieval {
-  flex-shrink: 0;
-  background: var(--gis-glass);
-  backdrop-filter: blur(var(--gis-glass-blur)) saturate(var(--gis-glass-saturate));
-  border: 1px solid var(--gis-glass-border);
-  border-left: 3px solid rgba(250, 204, 21, 0.8);
-  border-radius: var(--gis-radius-md, 10px);
-  box-shadow: inset 0 1px 0 var(--gis-glass-highlight);
-  overflow: hidden;
-}
-
-.qa-retrieval .qa-ref-header {
-  border-bottom: 1px solid rgba(250, 204, 21, 0.2);
-  background: rgba(250, 204, 21, 0.05);
-}
-
-.qa-retrieval-body {
-  padding: 10px 14px;
-}
-
-.qr-stat {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
+.kb-head__tasks svg { width: 13px; height: 13px; }
+.kb-head__tasks:hover { background: var(--fs-accent); color: #fff; box-shadow: var(--fs-e1); transform: translateY(-1px); }
+.kb-head__tasks:active { transform: translateY(0); box-shadow: none; }
+.kb-head__tasks-n {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--fs-accent);
+  color: #fff;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
-
-.qr-item {
+.kb-head__tasks:hover .kb-head__tasks-n { background: rgb(255 255 255 / 25%); }
+/* 进行中徽标（accent 底 + 呼吸）：有问答任务在跑时点亮 */
+.kb-head__tasks-n.is-live { animation: kb-live-pulse 1.4s ease-in-out infinite; }
+@keyframes kb-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.kb-head__badge {
+  font-family: var(--fs-font-mono);
   font-size: 11px;
-  color: var(--gis-text-muted, #94a3b8);
+  color: var(--fs-ink-500);
+  white-space: nowrap;
 }
-
-.qr-item b.ok {
-  color: #4ade80;
+.kb-head__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--fs-r-xs, 3px);
+  background: var(--fs-bg-sunken);
+  font-size: 11px;
+  color: var(--fs-ink-700);
+  white-space: nowrap;
 }
-
-.qr-item b.fail {
-  color: #ef4444;
-}
-
-.qr-item b {
-  color: var(--gis-text, #f8fafc);
-}
-
-.dot {
-  display: inline-block;
+.kb-head__dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
-  margin-right: 4px;
-  vertical-align: middle;
+  border-radius: 999px;
+  background: var(--fs-success);
 }
 
-.dot-ok {
-  background: #4ade80;
-  box-shadow: 0 0 4px rgba(74, 222, 128, 0.6);
-}
-
-.dot-off {
-  background: #64748b;
-}
-
-.qr-keywords {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  align-items: center;
-  margin-top: 8px;
-}
-
-.qr-kw-label {
-  font-size: 10px;
-  color: var(--gis-text-muted, #64748b);
-  flex-shrink: 0;
-}
-
-.qr-kw {
-  font-size: 10px;
-  padding: 1px 6px;
-  color: var(--gis-accent, #0ea5e9);
-  background: rgba(34, 211, 238, 0.1);
-  border: 1px solid rgba(34, 211, 238, 0.25);
-  border-radius: 8px;
-}
-
-/* 引用来源文档名 */
-.qa-ref-doc {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--gis-accent, #0ea5e9);
-  margin-bottom: 3px;
-}
-
-.qa-ref-scores {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.qa-ref-score.sub {
-  opacity: 0.7;
-}
-
-/* 检索为空提示 */
-.qa-no-match {
+/* ===== 主体（v0 sq-body 同构） ===== */
+.kb-body {
   flex: 1;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  font-size: 12px;
-  color: var(--gis-text-muted, #94a3b8);
-  background: var(--gis-glass);
-  border: 1px dashed var(--gis-glass-border);
-  border-radius: var(--gis-radius-md, 10px);
+}
+.kb-side {
+  flex: none;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--fs-bg-surface);
+  border-right: 1px solid var(--fs-hairline);
+  overflow: hidden;
+}
+.kb-side__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden; /* 整列不滚动：上传+文档库定高，问答历史弹性 + 内部滚动，翻页器常显沉底 */
+  padding: 24px 16px 14px; /* 顶部 24px：与页头之间留出呼吸，整列不再顶格（智能查询/Agent 中心左列同款） */
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.kb-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--fs-bg-canvas);
+}
+.kb-main__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 20px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--fs-hairline-strong) transparent;
 }
 
-/* 空状态 */
-.qa-empty {
+/* ===== 空态（v0 empty：虚线发丝框） ===== */
+.kb-empty {
   flex: 1;
+  min-height: 320px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  background: var(--gis-glass);
-  border: 1px solid var(--gis-glass-border);
-  border-radius: var(--gis-radius-md, 10px);
-  box-shadow: inset 0 1px 0 var(--gis-glass-highlight);
-}
-
-.qa-empty-icon {
-  font-size: 48px;
-  opacity: 0.3;
-  color: var(--gis-text-muted, #94a3b8);
-  font-family: ui-monospace, "Consolas", monospace;
-}
-
-.qa-empty-text {
+  gap: 8px;
+  padding: 32px 16px;
+  border: 1px dashed var(--fs-hairline-strong);
+  border-radius: var(--fs-r-md, 10px);
+  color: var(--fs-ink-500);
   font-size: 13px;
-  color: var(--gis-text-muted, #94a3b8);
-  max-width: 300px;
   text-align: center;
-  line-height: 1.6;
+}
+.kb-empty__ic {
+  width: 22px;
+  height: 22px;
+  color: var(--fs-ink-400);
+}
+.kb-empty__hint {
+  font-size: 11px;
+  color: var(--fs-ink-400);
+}
+.kb-empty__btn {
+  margin-top: 8px;
+  height: 28px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--fs-r-sm, 6px);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fs-ink-700);
+  background: var(--fs-bg-surface);
+  box-shadow: inset 0 0 0 1px var(--fs-hairline-strong);
+  cursor: pointer;
+  transition:
+    color var(--fs-dur-micro) var(--fs-ease),
+    background-color var(--fs-dur-micro) var(--fs-ease),
+    box-shadow var(--fs-dur-micro) var(--fs-ease),
+    transform var(--fs-dur-micro) var(--fs-ease);
+}
+.kb-empty__btn:hover {
+  color: var(--fs-accent);
+  background: var(--fs-bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--fs-accent);
+  transform: translateY(-1px);
+}
+/* 问答任务进程抽屉样式已随组件迁移至 KbTaskProcessDrawer.vue */
+/* ==================== V7 入场微动效（挂载即播，零 JS；基线即终态） ====================
+   双栏面板升起 + 空态浮出；文档/问答列表错峰由子面板容器淡入承担 */
+.kb-main, .kb-side { animation: panel-in 0.5s var(--fs-ease-out) both; }
+.kb-side { animation-delay: 0.08s; }
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+.kb-empty { animation: kb-empty-in 0.45s var(--fs-ease-out) both; }
+@keyframes kb-empty-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ===== 动效闸门：关闭时入场停于终态、循环全停、悬停位移归零 ===== */
+html[data-motion-allowed="false"] .kb-main,
+html[data-motion-allowed="false"] .kb-side,
+html[data-motion-allowed="false"] .kb-empty,
+html[data-motion-allowed="false"] .kb-head__tasks-n.is-live { animation: none; }
+html[data-motion-allowed="false"] .kb-head__tasks:hover,
+html[data-motion-allowed="false"] .kb-empty__btn:hover { transform: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="on"]) .kb-main,
+  html:not([data-motion="on"]) .kb-side,
+  html:not([data-motion="on"]) .kb-empty,
+  html:not([data-motion="on"]) .kb-head__tasks-n.is-live { animation: none; }
+  html:not([data-motion="on"]) .kb-head__tasks:hover,
+  html:not([data-motion="on"]) .kb-empty__btn:hover { transform: none; }
 }
 </style>

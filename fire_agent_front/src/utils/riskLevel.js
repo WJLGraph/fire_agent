@@ -6,12 +6,15 @@
  *   - Risk_Score 每 0.2 一档：0-0.2→1, 0.2-0.4→2, 0.4-0.6→3, 0.6-0.8→4, 0.8-1.0→5
  *   - FRP 每 20 一档（同 Final_Fire_Index）
  *
- * 颜色（与 gis-theme.css 变量保持一致）：
- *   1=青 #22d3ee  2=绿 #4ade80  3=黄 #facc15  4=橙 #fb923c  5=红 #ef4444
+ * 颜色（与 style/theme-v2.css 的 --fs-risk-1..5 严格一致，改动需双向同步）：
+ *   1=松绿 #6e9a87  2=橄榄 #a8a85a  3=赭黄 #c99a3e  4=火烬 #d2663a  5=氧化红 #a8352e
+ *
+ * 说明：canvas（OpenLayers / Three.js）读不到 CSS 变量，故此处为静态值。
+ *       取的是「浅深两主题都能读」的中间明度，与改造前的行为一致（原本也不随主题变）。
  */
 
 // ==================== 颜色常量 ====================
-export const RISK_COLORS = ['#22d3ee', '#4ade80', '#facc15', '#fb923c', '#ef4444']
+export const RISK_COLORS = ['#6e9a87', '#a8a85a', '#c99a3e', '#d2663a', '#a8352e']
 export const RISK_FILL_ALPHA = '50'
 export const RISK_COLORS_FILL = RISK_COLORS.map(c => c + RISK_FILL_ALPHA)
 

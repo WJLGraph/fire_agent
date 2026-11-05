@@ -14,11 +14,17 @@ from app.core.bailian_quota_data import get_bailian_account_quota
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.llm import is_qwen3_8_available, list_provider_models
+from app.core.redact import redact
 from app.core.security import get_current_user, get_current_admin
 from app.models.user import User
 from app.schemas.admin import ConfigUpdate, RoleUpdate
 
-router = APIRouter()
+# 路由级授权收口：本文件所有端点默认要求管理员。
+# 用 router 级 dependencies 而不是逐个函数改 —— 逐个改会漏（此前 /config、/logs 等
+# 9 个端点就只挂了 get_current_user，任何登录用户都能改写厂商密钥并读全站日志），
+# router 级默认全拦，将来新增端点自动继承，无需再记「这个端点该不该限管理员」。
+# 下方 3 个 /users 端点保留各自的 get_current_admin 依赖，重复声明不改变行为。
+router = APIRouter(dependencies=[Depends(get_current_admin)])
 
 # ====== 简易系统日志（内存环形缓冲） ======
 _SYSTEM_LOGS = []
@@ -26,12 +32,17 @@ _MAX_LOGS = 200
 
 
 def log_system_event(source: str, message: str, level: str = "INFO"):
-    """记录一条系统日志（供其他模块调用）"""
+    """记录一条系统日志（供其他模块调用）
+
+    入缓冲前先脱敏：这条日志会被「系统管理 · 运行日志」整条回显给前端，而调用方
+    传进来的常常是异常字符串——LLM/地图类报错习惯把请求 URL 原样打出来，里面就带
+    api_key。写入口统一洗一遍，比要求每个调用方「记得别把 key 拼进 message」可靠。
+    """
     _SYSTEM_LOGS.insert(0, {
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "level": level,
         "source": source,
-        "message": message,
+        "message": redact(message),
     })
     if len(_SYSTEM_LOGS) > _MAX_LOGS:
         _SYSTEM_LOGS.pop()
@@ -134,10 +145,16 @@ LONGCAT_CONSOLE_URLS = {
 
 # ====== 配置脱敏 ======
 def _mask(key: str) -> str:
-    """敏感字段脱敏"""
-    if key and len(key) > 8:
-        return key[:3] + "****" + key[-3:]
-    return key or ""
+    """敏感字段脱敏：只留 3 位前缀用于「辨认是哪把 key」，后缀一律不显示。
+
+    此前是 `key[:3] + "****" + key[-3:]`，6 个真实字符对定长 API key 来说足以
+    在撞库/日志泄露时缩小爆破空间；接口返回给前端的任何东西都算公开面。
+    """
+    if not key:
+        return ""
+    if len(key) <= 3:
+        return "*" * len(key)
+    return key[:3] + "****"
 
 
 def _current_config() -> dict:
@@ -158,7 +175,10 @@ def _current_config() -> dict:
             "vision_provider": settings.VISION_PROVIDER,
             "vision_model": settings.VISION_MODEL,
             "asr_model": settings.ASR_MODEL,
+            "tts_provider": settings.TTS_PROVIDER,
             "tts_model": settings.TTS_MODEL,
+            "ocr_provider": settings.OCR_PROVIDER,
+            "ocr_model": settings.OCR_MODEL,
             # AMD GPU Cloud
             "amd_api_key": _mask(settings.AMD_API_KEY),
             "amd_api_base": settings.AMD_API_BASE,
@@ -211,7 +231,10 @@ async def update_config(req: ConfigUpdate, current: User = Depends(get_current_u
         "vision_provider": "VISION_PROVIDER",
         "vision_model": "VISION_MODEL",
         "asr_model": "ASR_MODEL",
+        "tts_provider": "TTS_PROVIDER",
         "tts_model": "TTS_MODEL",
+        "ocr_provider": "OCR_PROVIDER",
+        "ocr_model": "OCR_MODEL",
         "amd_api_key": "AMD_API_KEY",
         "amd_api_base": "AMD_API_BASE",
         "amd_model": "AMD_MODEL",
@@ -329,9 +352,14 @@ async def list_llm_models(provider: str = "aliyun", current: User = Depends(get_
              category: str, is_free: bool, verified: bool, usage: str = ""):
         # 按分类匹配当前使用的模型（text→LLM / embedding→Embedding / vision→Vision / audio→ASR/TTS）
         if provider == "amd":
-            # AMD：text→AMD_MODEL；vision→VISION_MODEL（仅当视觉提供商为 amd 时）
+            # AMD：text→AMD_MODEL；vision→VISION_MODEL（仅当视觉提供商为 amd 时）；
+            # speech→TTS_MODEL（TTS_PROVIDER=amd）；ocr→OCR_MODEL（OCR_PROVIDER=amd）
             if category == "vision":
                 cur = settings.VISION_MODEL if settings.VISION_PROVIDER == "amd" else ""
+            elif category == "speech":
+                cur = settings.TTS_MODEL if settings.TTS_PROVIDER == "amd" else ""
+            elif category == "ocr":
+                cur = settings.OCR_MODEL if settings.OCR_PROVIDER == "amd" else ""
             else:
                 cur = settings.AMD_MODEL
         elif category == "audio":
@@ -405,6 +433,8 @@ async def list_llm_models(provider: str = "aliyun", current: User = Depends(get_
         directory = fetch_amd_directory()
         dir_ids = set()
         for m in directory:
+            if m["category"] not in ("text", "vision", "speech", "ocr"):
+                continue
             dir_ids.add(m["id"])
             tier_name = AMD_TIER_NAMES.get(m["tier"], "未知")
             desc = m["desc"] + (f"（发布方: {m['publisher']}）" if m["publisher"] else "")
@@ -414,6 +444,9 @@ async def list_llm_models(provider: str = "aliyun", current: User = Depends(get_
             row["tier_name"] = tier_name
             row["vendor"] = m["publisher"]
             row["status"] = m.get("status", "")
+            row["capability_label"] = m.get("capability_label", "")
+            row["multimodal"] = bool(m.get("multimodal"))
+            row["also_text"] = bool(m.get("also_text"))
             models.append(row)
         # /models 中存在但官方目录没有的模型（按规则自动分类）
         for mid in available:
@@ -493,7 +526,10 @@ async def list_llm_models(provider: str = "aliyun", current: User = Depends(get_
         "vision_provider": settings.VISION_PROVIDER,
         "vision_model": settings.VISION_MODEL,
         "asr_model": settings.ASR_MODEL,
+        "tts_provider": settings.TTS_PROVIDER,
         "tts_model": settings.TTS_MODEL,
+        "ocr_provider": settings.OCR_PROVIDER,
+        "ocr_model": settings.OCR_MODEL,
         "available_count": len(available),
         "free_count": sum(1 for m in models if m["is_free"]),
         "console_urls": console_urls,
@@ -530,6 +566,127 @@ async def bailian_account_quota(current: User = Depends(get_current_user)):
     return {"code": 200, "message": "success", "data": {"ok": True, **data}}
 
 
+@router.get("/model-status")
+async def model_status(current: User = Depends(get_current_user)):
+    """模型状态总览 — 每类模型当前用哪个提供商/模型、是否配置完整、调用链路是什么
+
+    不发起真实探测请求（避免页面加载被慢端点拖住），基于配置文件与熔断器内存态推导：
+    - models: 7 类能力（对话 / 向量 / 精排 / 视觉 / 语音识别 / 语音合成 / 文档识别）
+    - providers: 四个提供商的配置状态与当前激活项
+    - breakers: LLM 降级链熔断器实时状态（连续失败 ≥3 次熔断 60s）
+    """
+    from app.core.llm_invoker import breaker_status
+
+    provider_labels = {
+        "aliyun": "阿里百炼",
+        "amd": "AMD GPU Cloud",
+        "ollama": "本地 Ollama",
+        "longcat": "LongCat",
+        "local": "本地引擎",
+    }
+
+    def _provider_model(p: str) -> str:
+        return {
+            "amd": settings.AMD_MODEL,
+            "ollama": settings.OLLAMA_MODEL,
+            "longcat": settings.LONGCAT_MODEL,
+        }.get(p, settings.LLM_MODEL)
+
+    def _row(key: str, label: str, description: str, usage: str, provider: str,
+             model: str, configured: bool, enabled: bool = True, chain: str = ""):
+        return {
+            "key": key,
+            "label": label,
+            "description": description,
+            "usage": usage,
+            "provider": provider,
+            "provider_label": provider_labels.get(provider, provider),
+            "model": model or "",
+            "configured": bool(configured),
+            "enabled": bool(enabled) and bool(configured),
+            "chain": chain,
+        }
+
+    active = settings.ACTIVE_LLM_PROVIDER or "aliyun"
+
+    # AMD 视觉模型为多模态（VLM）：与对话模型同款时，它同时承担文本生成与图片识别；
+    # 在模型状态行内明确标注，避免管理端误以为"视觉模型不能当对话模型用"
+    _amd_vlm_as_llm = (
+        active == "amd"
+        and settings.VISION_PROVIDER == "amd"
+        and bool(settings.AMD_MODEL)
+        and settings.AMD_MODEL == settings.VISION_MODEL
+    )
+    llm_desc = "Agent 流水线与报告撰写的主模型"
+    if _amd_vlm_as_llm:
+        llm_desc += "（多模态 VLM，同时承担火情图片识别）"
+    vision_desc = "火情图片/卫星图理解与描述"
+    if settings.VISION_PROVIDER == "amd":
+        vision_desc += "（多模态，可兼作对话模型）"
+    providers = [
+        {"key": "aliyun", "label": provider_labels["aliyun"],
+         "configured": bool(settings.LLM_API_KEY), "active": active == "aliyun",
+         "base_url": settings.LLM_API_BASE or "", "model": settings.LLM_MODEL},
+        {"key": "amd", "label": provider_labels["amd"],
+         "configured": bool(settings.AMD_API_KEY), "active": active == "amd",
+         "base_url": settings.AMD_API_BASE or "", "model": settings.AMD_MODEL},
+        {"key": "ollama", "label": provider_labels["ollama"],
+         "configured": bool(settings.OLLAMA_API_BASE), "active": active == "ollama",
+         "base_url": settings.OLLAMA_API_BASE or "", "model": settings.OLLAMA_MODEL},
+        {"key": "longcat", "label": provider_labels["longcat"],
+         "configured": bool(settings.LONGCAT_API_KEY), "active": active == "longcat",
+         "base_url": settings.LONGCAT_API_BASE or "", "model": settings.LONGCAT_MODEL},
+    ]
+
+    models = [
+        _row("llm", "对话 / 报告生成", llm_desc,
+             "任务拆解、反思重试、报告生成、质量评审", active,
+             _provider_model(active),
+             {"aliyun": bool(settings.LLM_API_KEY), "amd": bool(settings.AMD_API_KEY),
+              "ollama": bool(settings.OLLAMA_API_BASE),
+              "longcat": bool(settings.LONGCAT_API_KEY)}.get(active, False),
+             chain="激活 Provider 优先，失败按 阿里百炼/AMD/Ollama/LongCat 顺序降级"),
+        _row("embedding", "向量模型", "知识库文档切片向量化与检索",
+             "知识库入库、RAG 语义检索", "aliyun", settings.EMBEDDING_MODEL,
+             bool(settings.LLM_API_KEY)),
+        _row("rerank", "检索精排", "对向量召回结果做相关性精排（失败回退 RRF 融合）",
+             "知识库检索结果重排", "aliyun", settings.RERANK_MODEL,
+             settings.RERANK_ENABLED and bool(settings.LLM_API_KEY),
+             enabled=settings.RERANK_ENABLED, chain="Rerank → RRF 融合原序"),
+        _row("vision", "视觉理解", vision_desc,
+             "图片问询、火情影像识别", settings.VISION_PROVIDER, settings.VISION_MODEL,
+             (bool(settings.AMD_API_KEY) if settings.VISION_PROVIDER == "amd"
+              else bool(settings.LLM_API_KEY))),
+        _row("asr", "语音识别", "语音输入转文本（固定走百炼）",
+             "Agent 中心语音输入、智能查询语音", "aliyun", settings.ASR_MODEL,
+             bool(settings.LLM_API_KEY)),
+        _row("tts", "语音合成", "报告/结论语音播报（AMD OmniVoice 兜底）",
+             "报告播报、结论朗读", settings.TTS_PROVIDER, settings.TTS_MODEL,
+             (bool(settings.AMD_API_KEY) if settings.TTS_PROVIDER == "amd"
+              else bool(settings.LLM_API_KEY or settings.AMD_API_KEY)),
+             chain="百炼 → AMD OmniVoice"),
+        _row("ocr", "文档识别", "PDF/扫描件识别为 Markdown（GB/T 标准文档）",
+             "知识库文档入库", settings.OCR_PROVIDER, settings.OCR_MODEL,
+             bool(settings.AMD_API_KEY) if settings.OCR_PROVIDER == "amd" else True,
+             chain="PaddleOCR → AMD MinerU → 本地 RapidOCR"),
+    ]
+
+    return {
+        "code": 200,
+        "message": "success",
+        "data": {
+            "active_provider": active,
+            "active_provider_label": provider_labels.get(active, active),
+            "active_model": _provider_model(active),
+            "models": models,
+            "providers": providers,
+            "breakers": breaker_status(),
+            "note": "AMD GPU Cloud 为默认底座；任一提供商连续失败 3 次进入 60s 熔断，"
+                    "自动切换降级链（阿里百炼 → AMD → Ollama → LongCat → 模板兜底）。",
+        },
+    }
+
+
 @router.get("/status")
 async def system_status(current: User = Depends(get_current_user)):
     """系统运行状态总览"""
@@ -563,8 +720,9 @@ async def system_status(current: User = Depends(get_current_user)):
                 {"name": "Orchestrator", "framework": "LangGraph", "status": "ready"},
                 {"name": "DataAgent", "framework": "LangChain Tool", "status": "ready"},
                 {"name": "GisAgent", "framework": "Shapely/GeoPandas", "status": "ready"},
-                {"name": "ReportAgent", "framework": "LangChain LLM", "status": "ready"},
                 {"name": "RagAgent", "framework": "LangChain RAG", "status": "ready"},
+                {"name": "ReportAgent", "framework": "LangChain LLM", "status": "ready"},
+                {"name": "Reviewer", "framework": "LLM Review", "status": "ready"},
             ],
         },
     }

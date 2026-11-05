@@ -2,17 +2,24 @@
 /**
  * 预测火险等级占比饼图（右上）
  * ★★★ 图表数据与 predictViewMode 同步：逐日用逐日数据，逐月用逐月数据 ★★★
- * 五色与地图一致：1青 2绿 3黄 4橙 5红（见 echartsGisTheme.riskLevelColors）
+ * 五色与地图一致：1青 2绿 3黄 4橙 5红（见 riskLevel.js 的 RISK_COLORS）
+ *
+ * 阶段 3：echarts init/dispose/resize/主题重建 交由 components/chart/EChart，
+ *         全屏 + 分页表格交由 components/chart/ChartFullscreenDialog。
+ * ★ getOption / getMaxChartOption 的内容改为 computed 产出，配置本身一字未改；
+ *   原先依赖 watch(searchDate/viewMode) + watch(theme.mode) 手动重绘，
+ *   现在由响应式链路自动传导（tableData → levelStats → option）。
  */
-import { FullScreen, ScaleToOriginal } from '@element-plus/icons-vue'
-import { onMounted, ref, nextTick, onUnmounted, computed, watch } from 'vue'
-import * as echarts from 'echarts'
+import { FullScreen } from '@element-plus/icons-vue'
+import { ref, computed } from 'vue'
 import predictMonthJson from '@/assets/predict_2025_2026_month.json'
 import predictDailyJson from '@/assets/predict_2025_2026_daily.json'
-import { riskLevelColors } from '@/utils/echartsGisTheme'
+import { RISK_COLORS } from '@/utils/riskLevel'
 import { chartTokens } from '@/utils/themeTokens'
 import { useThemeStore } from '@/stores/theme'
 import { fireIndexToLevel, riskScoreToLevel } from '@/utils/riskLevel'
+import EChart from '@/components/chart/EChart.vue'
+import ChartFullscreenDialog from '@/components/chart/ChartFullscreenDialog.vue'
 
 // 接收 searchDate、viewMode 和 predictData
 const props = defineProps({
@@ -32,12 +39,8 @@ const props = defineProps({
 
 // 主题 Store（切换主题时重建图表）
 const theme = useThemeStore()
-
-// 小图 / 全屏图容器
-const chartRef = ref(null)
-const maxChartRef = ref(null)
-let chartInstance = null
-let maxChartInstance = null
+// chartTokens 内部不接受参数，传 theme.mode 只为建立响应式依赖（与其余三个图一致）
+const tokens = computed(() => chartTokens(theme.mode))
 
 // 全屏状态
 const isMaximized = ref(false)
@@ -135,36 +138,22 @@ const levelStats = computed(() => {
   const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
   tableData.value.forEach(item => counts[item.riskLevel]++)
   return [
-    { value: counts[1], name: '1级火险', itemStyle: { color: riskLevelColors[0] } },
-    { value: counts[2], name: '2级火险', itemStyle: { color: riskLevelColors[1] } },
-    { value: counts[3], name: '3级火险', itemStyle: { color: riskLevelColors[2] } },
-    { value: counts[4], name: '4级火险', itemStyle: { color: riskLevelColors[3] } },
-    { value: counts[5], name: '5级火险', itemStyle: { color: riskLevelColors[4] } }
+    { value: counts[1], name: '1级火险', itemStyle: { color: RISK_COLORS[0] } },
+    { value: counts[2], name: '2级火险', itemStyle: { color: RISK_COLORS[1] } },
+    { value: counts[3], name: '3级火险', itemStyle: { color: RISK_COLORS[2] } },
+    { value: counts[4], name: '4级火险', itemStyle: { color: RISK_COLORS[3] } },
+    { value: counts[5], name: '5级火险', itemStyle: { color: RISK_COLORS[4] } }
   ]
 })
 
-// 分页
-const currentPage = ref(1)
-const pageSize = ref(20)
-const isLoading = ref(false)
-
-const paginatedData = computed(() => {
-  return tableData.value.slice(
-    (currentPage.value - 1) * pageSize.value,
-    currentPage.value * pageSize.value
-  )
-})
-
-const handleCurrentChange = (val) => {
-  isLoading.value = true
-  currentPage.value = val
-  setTimeout(() => { isLoading.value = false }, 300)
-}
-
-const handleSizeChange = (val) => {
-  pageSize.value = val
-  currentPage.value = 1
-}
+// 全屏表格列定义（label 随 viewMode 变化；三列由 #fireIndex / #predFireRisk / #riskLevel 插槽渲染）
+const tableColumns = computed(() => [
+  { prop: 'City', label: '城市', minWidth: 120 },
+  { prop: 'displayDate', label: props.viewMode === 'daily' ? '日期' : '月份', minWidth: 100, sortable: true },
+  { prop: '_fireIndex', label: props.viewMode === 'daily' ? '火险指数' : '火险评分', minWidth: 100, slot: 'fireIndex' },
+  { prop: '_predFireRisk', label: '预测火点数', minWidth: 100, slot: 'predFireRisk' },
+  { prop: 'riskLevel', label: '火险等级', minWidth: 100, slot: 'riskLevel' },
+])
 
 // ECharts 会就地改写 series.data，需拷贝以免污染 computed 缓存、导致全屏与小图不一致
 const clonePieData = () =>
@@ -175,8 +164,8 @@ const clonePieData = () =>
   }))
 
 // 饼图配置
-const getOption = () => {
-  const t = chartTokens()
+const option = computed(() => {
+  const t = tokens.value
   return {
   backgroundColor: 'transparent',
   tooltip: {
@@ -223,11 +212,12 @@ const getOption = () => {
     data: clonePieData()
   }]
   }
-}
+})
 
-const getMaxChartOption = () => {
-  const base = getOption()
-  const t = chartTokens()
+// 全屏配置：外部标签 + 居中
+const maxOption = computed(() => {
+  const base = option.value
+  const t = tokens.value
   const s0 = base.series[0]
   return {
     ...base,
@@ -252,83 +242,11 @@ const getMaxChartOption = () => {
       center: ['50%', '50%']
     }]
   }
-}
+})
 
-const scheduleMaxChartLayout = () => {
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      if (!maxChartInstance || !maxChartRef.value) return
-      maxChartInstance.resize()
-      maxChartInstance.setOption(getMaxChartOption(), { notMerge: true })
-    })
-  })
-}
-
-const initChart = () => {
-  if (chartRef.value) {
-    if (chartInstance) chartInstance.dispose()
-    chartInstance = echarts.init(chartRef.value)
-    chartInstance.setOption(getOption(), { notMerge: true })
-  }
-}
-
-const initMaxChart = () => {
-  if (maxChartRef.value) {
-    if (maxChartInstance) maxChartInstance.dispose()
-    maxChartInstance = echarts.init(maxChartRef.value)
-    maxChartInstance.setOption(getMaxChartOption(), { notMerge: true })
-    scheduleMaxChartLayout()
-  }
-}
-
-const applyChartDataToInstances = () => {
-  chartInstance?.setOption(getOption(), { notMerge: true })
-  if (isMaximized.value && maxChartInstance) {
-    maxChartInstance.setOption(getMaxChartOption(), { notMerge: true })
-    scheduleMaxChartLayout()
-  }
-}
-
-const toggleMaximize = async () => {
+const toggleMaximize = () => {
   isMaximized.value = !isMaximized.value
-  await nextTick()
-  if (isMaximized.value) {
-    initMaxChart()
-  } else {
-    chartInstance && chartInstance.resize()
-  }
 }
-
-const handleResize = () => {
-  chartInstance && chartInstance.resize()
-  maxChartInstance && maxChartInstance.resize()
-}
-
-watch(
-  () => [props.searchDate, props.viewMode],
-  () => {
-    nextTick(() => applyChartDataToInstances())
-  }
-)
-
-// 主题切换时重建图表（实时重新读取主题 Token）
-watch(
-  () => theme.mode,
-  () => {
-    nextTick(() => applyChartDataToInstances())
-  }
-)
-
-onMounted(() => {
-  initChart()
-  window.addEventListener('resize', handleResize)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('resize', handleResize)
-  if (chartInstance) chartInstance.dispose()
-  if (maxChartInstance) maxChartInstance.dispose()
-})
 </script>
 
 <template>
@@ -340,81 +258,32 @@ onUnmounted(() => {
           <FullScreen />
         </el-icon>
       </div>
-      <div class="chart-area" ref="chartRef"></div>
+      <EChart class="chart-area" :option="option" />
     </div>
 
-    <!-- 全屏模式 -->
-    <Teleport to="body">
-      <div v-if="isMaximized" class="maximized-view">
-        <div class="header-bar">
-          <span class="max-title">预测火险等级占比详情</span>
-          <el-button type="primary" circle @click="toggleMaximize">
-            <el-icon size="20">
-              <ScaleToOriginal />
-            </el-icon>
-          </el-button>
-        </div>
-
-        <div class="content-container">
-          <!-- 左侧大图 -->
-          <div class="chart-area-max" ref="maxChartRef"></div>
-
-          <!-- 右侧表格 -->
-          <div class="table-area">
-            <div class="table-content-wrapper">
-              <el-table
-                v-if="isMaximized"
-                v-loading="isLoading"
-                :data="paginatedData"
-                stripe
-                border
-                style="width: 100%; height: 100%; position: absolute; top: 0; left: 0;"
-                :header-cell-style="{ background: 'var(--gis-table-header)', color: 'var(--gis-text-muted)', fontWeight: 'bold' }"
-              >
-                <el-table-column prop="City" label="城市" min-width="120" />
-                <el-table-column prop="displayDate" :label="viewMode === 'daily' ? '日期' : '月份'" min-width="100" sortable />
-                <el-table-column :prop="viewMode === 'daily' ? '_fireIndex' : '_fireIndex'" :label="viewMode === 'daily' ? '火险指数' : '火险评分'" min-width="100">
-                  <template #default="scope">
-                    {{ viewMode === 'daily'
-                      ? (scope.row._fireIndex != null ? Number(scope.row._fireIndex).toFixed(1) : '0.0')
-                      : (scope.row._fireIndex != null ? Number(scope.row._fireIndex).toFixed(4) : '0.0000')
-                    }}
-                  </template>
-                </el-table-column>
-                <el-table-column prop="_predFireRisk" :label="viewMode === 'daily' ? '预测火点数' : '预测火点数'" min-width="100">
-                  <template #default="scope">
-                    {{ scope.row._predFireRisk != null ? Math.round(Number(scope.row._predFireRisk)) : 0 }}
-                  </template>
-                </el-table-column>
-                <el-table-column prop="riskLevel" label="火险等级" min-width="100">
-                  <template #default="scope">
-                    <el-tag
-                      :type="scope.row.riskLevel >= 4 ? 'danger' : (scope.row.riskLevel >= 3 ? 'warning' : 'primary')"
-                    >
-                      {{ scope.row.riskLevel }}级
-                    </el-tag>
-                  </template>
-                </el-table-column>
-              </el-table>
-            </div>
-
-            <div class="pagination-container">
-              <el-pagination
-                v-model:current-page="currentPage"
-                v-model:page-size="pageSize"
-                :page-sizes="[20, 50, 100, 200, 500]"
-                :total="tableData.length"
-                popper-style="z-index: 99999"
-                layout="total, sizes, prev, pager, next, jumper"
-                background
-                @size-change="handleSizeChange"
-                @current-change="handleCurrentChange"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <!-- 全屏模式（统一由 ChartFullscreenDialog 渲染：左图 + 右分页表格） -->
+    <ChartFullscreenDialog
+      v-model="isMaximized"
+      title="预测火险等级占比详情"
+      :option="maxOption"
+      :columns="tableColumns"
+      :rows="tableData"
+    >
+      <template #fireIndex="{ row }">
+        {{ row._fireIndex != null
+          ? Number(row._fireIndex).toFixed(viewMode === 'daily' ? 1 : 4)
+          : (viewMode === 'daily' ? '0.0' : '0.0000')
+        }}
+      </template>
+      <template #predFireRisk="{ row }">
+        {{ row._predFireRisk != null ? Math.round(Number(row._predFireRisk)) : 0 }}
+      </template>
+      <template #riskLevel="{ row }">
+        <el-tag :type="row.riskLevel >= 4 ? 'danger' : (row.riskLevel >= 3 ? 'warning' : 'primary')">
+          {{ row.riskLevel }}级
+        </el-tag>
+      </template>
+    </ChartFullscreenDialog>
   </div>
 </template>
 
@@ -435,11 +304,11 @@ onUnmounted(() => {
     top: 0;
     right: 0;
     cursor: pointer;
-    color: var(--gis-text-muted, #94a3b8);
+    color: var(--fs-ink-500, var(--fs-ink-500));
     z-index: 10;
-    background: var(--gis-glass-solid);
-    border: 1px solid var(--gis-border);
-    border-radius: var(--gis-radius-xs, 4px);
+    background: var(--fs-bg-raised);
+    border: 1px solid var(--fs-hairline);
+    border-radius: var(--fs-r-xs, 4px);
     width: 24px;
     height: 24px;
     display: flex;
@@ -447,118 +316,14 @@ onUnmounted(() => {
     justify-content: center;
 
     &:hover {
-      background: var(--gis-accent-soft);
-      box-shadow: var(--gis-glow);
+      background: var(--fs-accent-soft);
+      box-shadow: var(--fs-e1);
     }
   }
 
   .chart-area {
     width: 100%;
     height: 100%;
-  }
-}
-
-.maximized-view {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  z-index: 2000;
-  background: var(--gis-atmo-bg);
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-
-  .header-bar {
-    padding-right: 20px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-    flex-shrink: 0;
-
-    .max-title {
-      font-size: 22px;
-      color: var(--gis-text, #f8fafc);
-      font-weight: 600;
-      letter-spacing: 0.04em;
-      text-shadow: var(--gis-text-glow);
-    }
-  }
-
-  .content-container {
-    flex: 1;
-    display: flex;
-    overflow: hidden;
-    gap: 20px;
-
-    .chart-area-max {
-      width: 40%;
-      height: 100%;
-      background: var(--gis-bg-panel);
-      border-radius: 2px;
-      border: 1px solid var(--gis-border);
-    }
-
-    .table-area {
-      flex: 1;
-      height: 100%;
-      background: #fff;
-      border-radius: 6px;
-      padding: 10px;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-
-      .table-content-wrapper {
-        flex: 1;
-        width: 100%;
-        position: relative;
-        overflow: hidden;
-      }
-
-      :deep(.el-table) {
-        border-radius: 6px;
-        overflow: hidden;
-        border: 1px solid #ebeef5;
-        --el-table-border-color: #ebeef5;
-        background-color: #fff;
-      }
-
-      :deep(.el-table .el-table__header-wrapper th) {
-        background: #f5f5f5;
-        font-weight: 500;
-        border-bottom: 1px solid #ebeef5;
-        color: #333;
-      }
-
-      :deep(.el-table--striped .el-table__body tr.el-table__row--striped td) {
-        background: #fafafa !important;
-      }
-
-      :deep(.el-table .el-table__body tr:hover > td) {
-        background: #f0f0f0 !important;
-      }
-
-      :deep(.el-table .cell) {
-        padding: 12px 16px;
-        font-size: 13px;
-        color: #333;
-      }
-
-      .pagination-container {
-        height: 70px;
-        flex-shrink: 0;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding-top: 5px;
-        padding-bottom: 25px;
-        padding-right: 20px;
-      }
-    }
   }
 }
 </style>

@@ -58,6 +58,9 @@ CONFIDENCE_MAP = {"高": "high", "低": "low", "中": "nominal", "high": "high",
 # 中文数字月份："一月" → 1
 CN_MONTH = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10, "十一": 11, "十二": 12}
 
+# 城市排名类问法（如"火点最多的3个城市"）必须按城市聚合，不能走全局汇总
+_CITY_RANK_RE = re.compile(r"(最多|排名|排行|top).{0,8}(城市|州市)", re.IGNORECASE)
+
 
 class _QueryParseLLM(BaseModel):
     """LLM 意图解析结构化输出 Schema（with_structured_output 使用）"""
@@ -112,6 +115,10 @@ class QueryService:
 
     def parse(self, query_text: str) -> QueryParseResult:
         """解析自然语言查询（返回结果带 method 字段，标识 LLM 或关键词）"""
+        # 城市排名类问法语义固定（按城市计数取 TopN），直接走关键词规则，
+        # 避免 LLM 误判成"数据汇总"而返回全局总数
+        if _CITY_RANK_RE.search(query_text):
+            return self._parse_with_keyword(query_text)
         if llm_available():
             result = self._parse_with_llm(query_text)
             if result.method == "keyword":
@@ -233,6 +240,10 @@ class QueryService:
             if m:
                 params["top_k"] = int(m.group(1))
 
+        # 城市排名：按城市计数聚合，而不是逐条火点排序
+        if _CITY_RANK_RE.search(text):
+            params["group_by"] = "city"
+
         exp = self._explain_keyword(intent, params)
         return QueryParseResult(intent=intent, params=params, explanation=exp)
 
@@ -255,7 +266,9 @@ class QueryService:
         if params.get("confidence"):
             conf_label = {"high": "高置信度", "nominal": "中置信度", "low": "低置信度"}.get(params["confidence"], params["confidence"])
             parts.append(conf_label)
-        if params.get("sort") == "desc":
+        if params.get("group_by") == "city":
+            parts.append(f"按城市聚合取 Top{params.get('top_k') or 5}")
+        elif params.get("sort") == "desc":
             parts.append("按数值降序取 TopN")
         return "，".join(parts) + "。"
 
@@ -334,6 +347,8 @@ class QueryService:
                 sd = f"{p['year']}-01-01"
                 ed = f"{p['year']}-12-31"
         q = HistoryFireQuery(start_date=sd, end_date=ed, city=p.get("city"), confidence=p.get("confidence"))
+        if p.get("group_by") == "city":
+            return self._exec_history_city_rank(p, q)
         result = self.repo.query_history_fires(q)
         items = result["items"]
         if p.get("sort") == "desc":
@@ -367,6 +382,32 @@ class QueryService:
                            chart_type="bar" if len(cd["labels"]) > 1 else "pie",
                            geo_data=self._build_geojson(geo_points, name_key="city", value_key="frp", color_mode="value"),
                            total=result["total"])
+
+    def _exec_history_city_rank(self, p: dict, q) -> QueryResult:
+        """按城市统计火点数量并取 TopN（"火点最多的 N 个城市"）"""
+        limit = p.get("top_k") or 5
+        res = self.repo.count_history_by_city(q, limit)
+        cities = res["items"]
+        label = {"high": "高置信度", "nominal": "中置信度", "low": "低置信度"}.get(p.get("confidence"), "")
+        noun = f"{label}火点" if label else "火点"
+        if cities:
+            top = "、".join(f"{c['city']}（{c['count']} 条）" for c in cities)
+            summary = f"{noun}最多的 {len(cities)} 个城市：{top}（统计范围共 {res['total']} 条）"
+        else:
+            summary = f"未查询到{noun}记录"
+        cd = {"labels": [c["city"] for c in cities], "values": [c["count"] for c in cities]}
+        geo_points = [
+            {**c, "longitude": CITY_CENTERS[c["city"]][0], "latitude": CITY_CENTERS[c["city"]][1]}
+            for c in cities if c.get("city") in CITY_CENTERS
+        ]
+        return QueryResult(
+            summary=summary,
+            table_data=cities,
+            chart_data=cd,
+            chart_type="bar",
+            geo_data=self._build_geojson(geo_points, name_key="city", value_key="count", color_mode="value"),
+            total=len(cities),
+        )
 
     def _exec_predict(self, p: dict) -> QueryResult:
         from app.schemas.dashboard import PredictRiskQuery

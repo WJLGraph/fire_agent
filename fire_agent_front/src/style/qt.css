@@ -1,0 +1,720 @@
+/**
+ * =============================================================================
+ * qt.css — 「指挥台面板 + 光照物理」共享样式工具（StyleKit 选型落地方）
+ *
+ * 选型（只借鉴方法与参数，不复制代码/素材/品牌）：
+ *   · Dark Mode       —— hover「光照物理」：边框/文字被光源点亮一档，
+ *                        按钮内嵌顶边高光 inset 0 1px 0 rgba(255,255,255,.15)，
+ *                        active 下沉 0.5px，focus ring 清晰可见
+ *   · macOS Vibrancy  —— 实色三级面板层级（canvas/surface/sunken），1px 发丝边，
+ *                        无光效无渐变，交互动效只做颜色过渡
+ *   · Bento Grid      —— 磁贴/数据卡组织：统一 gap、尺寸差异建层级、hover 上浮 2px
+ *   · Vertical Timeline —— 中央连接线 + 节点状态色映射火险语义色
+ *   · Corporate Clean —— 表格行 hover、focus ring + offset（WCAG）规则
+ *   · Notion          —— 内容区列表 hover「只变背景色、永不位移缩放」
+ *
+ * 硬约束：
+ *   - 全部颜色/圆角/间距/缓动引用 theme-v2 既有 --fs-* 令牌，不新造任何颜色值；
+ *     半透明层次一律用既有 RGB 三元组令牌 rgba(var(--fs-*-rgb), alpha) 表达
+ *   - 只新增类名，不覆盖任何既有选择器；内部页一律实色面板（玻璃仅公开页 hero）
+ *   - prefers-reduced-motion 全量降级
+ * =============================================================================
+ */
+
+/* ==================== 0. 公开站点设计系统（pg-*，一整套重做） ====================
+   Art direction：指挥台气象图 —— 编辑式排版 + 数据图纸语言。
+   版式规则：12 栏 / max-1240 / gutter 48（≤768 为 24）；垂直节奏 8px 基数；
+            章节头统一「序号 + mono eyebrow + 标题 + lead + 右 meta」；卡片禁纯文字堆叠。
+   字号层级固定（移动端降一档），不靠 clamp 乱跳 */
+
+.pg-wrap {
+    width: min(1240px, 100% - 96px);
+    margin: 0 auto;
+}
+@media (max-width: 768px) {
+    .pg-wrap { width: min(1240px, 100% - 48px); }
+}
+
+/* 字号层级（固定档，移动端降一档） */
+.pg-display {
+    font-size: 44px;
+    font-weight: 600;
+    line-height: 1.22;
+    letter-spacing: 0.005em;
+    color: var(--fs-ink-900);
+}
+.pg-h2 {
+    font-size: 30px;
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: 0.005em;
+    color: var(--fs-ink-900);
+}
+.pg-h3 {
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.45;
+    color: var(--fs-ink-900);
+}
+.pg-body {
+    font-size: 14px;
+    line-height: 1.9;
+    color: var(--fs-ink-700);
+}
+.pg-cap {
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--fs-ink-500);
+}
+@media (max-width: 768px) {
+    .pg-display { font-size: 30px; }
+    .pg-h2 { font-size: 24px; }
+    .pg-h3 { font-size: 15px; }
+}
+
+/* 统一章节头：序号 + eyebrow + 标题 + lead + 右 meta */
+.pg-head {
+    display: grid;
+    grid-template-columns: 56px 1fr auto;
+    align-items: end;
+    column-gap: 20px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--fs-hairline);
+    margin-bottom: 40px;
+}
+.pg-head__no {
+    font-family: var(--fs-font-mono);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    color: var(--fs-ink-400);
+    padding-bottom: 6px;
+}
+.pg-head__main { min-width: 0; }
+.pg-head__eyebrow {
+    margin: 0 0 8px;
+    font-family: var(--fs-font-mono);
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    color: var(--fs-ink-500);
+}
+.pg-head__title { margin: 0; }
+.pg-head__lead {
+    margin: 10px 0 0;
+    max-width: 560px;
+}
+.pg-head__meta {
+    font-family: var(--fs-font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: var(--fs-ink-400);
+    text-align: right;
+    padding-bottom: 4px;
+    white-space: nowrap;
+}
+@media (max-width: 768px) {
+    .pg-head { grid-template-columns: 40px 1fr; }
+    .pg-head__meta { display: none; }
+}
+
+/* 统一面板/卡片：同一圆角、同一发丝边、同一 hover 规则 */
+.pg-card {
+    background: var(--fs-bg-surface);
+    border: 1px solid var(--fs-hairline);
+    border-radius: var(--fs-r-lg);
+    padding: 28px;
+    transition: border-color var(--fs-dur-micro) var(--fs-ease), box-shadow var(--fs-dur-micro) var(--fs-ease);
+}
+.pg-card:hover {
+    border-color: var(--fs-hairline-strong);
+    box-shadow: var(--fs-e1);
+}
+/* 可交互卡片专用：hover 上浮 2px（Bento 磁贴语义）。
+   默认 .pg-card 不上浮——表格/FAQ/大容器等非点击面板上浮会给出错误的可点暗示 */
+.pg-card--lift {
+    transition:
+        border-color var(--fs-dur-micro) var(--fs-ease),
+        box-shadow var(--fs-dur-micro) var(--fs-ease),
+        transform var(--fs-dur-micro) var(--fs-ease);
+}
+.pg-card--lift:hover { transform: translateY(-2px); box-shadow: var(--fs-e2); }
+.pg-card--lift:active { transform: translateY(0); }
+/* off（或 auto+系统减）：只留颜色/阴影变化，取消位移 */
+html[data-motion-allowed="false"] .pg-card--lift:hover,
+html[data-motion-allowed="false"] .pg-card--lift:active { transform: none; }
+
+/* 章节间距：8px 基数节奏（clamp 呼吸区间） */
+.pg-sec { padding: clamp(64px, 6vw, 104px) 0; }
+.pg-sec + .pg-sec { border-top: 1px solid var(--fs-hairline); }
+@media (max-width: 768px) {
+    .pg-sec { padding: 56px 0; }
+}
+
+/* ==================== 0.1 深色仪表带（明暗交替节奏；既有 token 反相组合，不改 token 值） ====================
+   浅色主题：墨色底 + 纸色字；深色主题：比画布更深一档（sunken），文字保持 ink */
+.pg-band {
+    background: rgb(var(--fs-ink-900-rgb));
+    color: rgb(var(--fs-bg-canvas-rgb));
+}
+.pg-band .pg-h2, .pg-band .pg-h3, .pg-band .pg-head__title { color: rgb(var(--fs-bg-canvas-rgb)); }
+.pg-band .pg-body { color: rgba(var(--fs-bg-canvas-rgb), 0.72); }
+.pg-band .pg-cap, .pg-band .pg-head__no, .pg-band .pg-head__eyebrow, .pg-band .pg-head__meta { color: rgba(var(--fs-bg-canvas-rgb), 0.52); }
+.pg-band .pg-head { border-bottom-color: rgba(var(--fs-bg-canvas-rgb), 0.16); }
+.pg-band .pg-card {
+    background: rgba(var(--fs-bg-canvas-rgb), 0.04);
+    border-color: rgba(var(--fs-bg-canvas-rgb), 0.14);
+}
+.pg-band .pg-card:hover { border-color: rgba(var(--fs-bg-canvas-rgb), 0.28); }
+html.dark .pg-band {
+    background: rgb(var(--fs-bg-sunken-rgb));
+    color: rgb(var(--fs-ink-900-rgb));
+}
+html.dark .pg-band .pg-h2, html.dark .pg-band .pg-h3, html.dark .pg-band .pg-head__title { color: rgb(var(--fs-ink-900-rgb)); }
+html.dark .pg-band .pg-body { color: var(--fs-ink-700); }
+html.dark .pg-band .pg-cap, html.dark .pg-band .pg-head__no, html.dark .pg-band .pg-head__eyebrow, html.dark .pg-band .pg-head__meta { color: var(--fs-ink-500); }
+html.dark .pg-band .pg-head { border-bottom-color: var(--fs-hairline); }
+html.dark .pg-band .pg-card { background: rgba(var(--fs-ink-900-rgb), 0.03); border-color: var(--fs-hairline); }
+html.dark .pg-band .pg-card:hover { border-color: var(--fs-hairline-strong); }
+
+/* ==================== 0.2 持续动效三态降级（mo-loop） ====================
+   所有 CSS 持续循环动画挂 .mo-loop；off 或 auto+系统 reduce 时全部静止 */
+html[data-motion-allowed="false"] .mo-loop,
+html[data-motion-allowed="false"] .mo-loop::before,
+html[data-motion-allowed="false"] .mo-loop::after {
+    animation: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+    html:not([data-motion="on"]) .mo-loop,
+    html:not([data-motion="on"]) .mo-loop::before,
+    html:not([data-motion="on"]) .mo-loop::after {
+        animation: none !important;
+    }
+}
+
+/* 状态点呼吸（指挥台在线语义；2.6s 低幅） */
+.qt-status i { animation: qt-dot-pulse 2.6s var(--fs-ease) infinite; }
+@keyframes qt-dot-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.55; transform: scale(0.78); }
+}
+html[data-motion-allowed="false"] .qt-status i { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+    html:not([data-motion="on"]) .qt-status i { animation: none; }
+}
+
+/* ==================== 0.3 页间转场标签（VT banner：mono 页码 + 横向细线扫过 ≤320ms） ==================== */
+#vt-banner {
+    position: fixed;
+    top: 64px;
+    left: 48px;
+    z-index: 90;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    pointer-events: none;
+    opacity: 0;
+}
+#vt-banner .vtb__tag {
+    font-family: var(--fs-font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    color: var(--fs-ink-500);
+}
+#vt-banner .vtb__line {
+    display: block;
+    width: 120px;
+    height: 1px;
+    background: var(--fs-accent);
+    transform: scaleX(0);
+    transform-origin: left center;
+}
+#vt-banner.is-on { animation: vtb-in 0.32s var(--fs-ease) both; }
+#vt-banner.is-on .vtb__line { animation: vtb-line 0.32s var(--fs-ease) both; }
+@keyframes vtb-in {
+    0% { opacity: 0; transform: translateY(4px); }
+    20% { opacity: 1; transform: none; }
+    80% { opacity: 1; }
+    100% { opacity: 0; }
+}
+@keyframes vtb-line { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* scrub 线条在 pg-head 上的落点：eyebrow 旁短横线 */
+.pg-head__eyebrow::before {
+    content: '';
+    display: inline-block;
+    width: 22px;
+    height: 1px;
+    margin-right: 8px;
+    vertical-align: middle;
+    background: var(--fs-accent);
+    transform: scaleX(var(--hd-line, 1));
+    transform-origin: left center;
+}
+
+/* ==================== 1. 指挥台网格底纹（章节/大屏背景） ==================== */
+.qt-grid {
+    background-image:
+        linear-gradient(rgba(var(--fs-ink-900-rgb), 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(var(--fs-ink-900-rgb), 0.045) 1px, transparent 1px);
+    background-size: 32px 32px;
+}
+.qt-grid--faint {
+    background-image:
+        linear-gradient(rgba(var(--fs-ink-900-rgb), 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(var(--fs-ink-900-rgb), 0.03) 1px, transparent 1px);
+    background-size: 48px 48px;
+}
+
+/* ==================== 2. 实色面板（macOS Vibrancy 三级层级 + 发丝边） ==================== */
+.qt-panel {
+    background: var(--fs-bg-surface);
+    border: 1px solid var(--fs-hairline);
+    border-radius: var(--fs-r-lg);
+}
+.qt-panel--sunken { background: var(--fs-bg-sunken); }
+.qt-panel--raised { background: var(--fs-bg-raised); box-shadow: var(--fs-e1); }
+
+/* 光照物理 hover：边框被「光源」点亮一档 + 轻投影（Dark Mode 手法） */
+.qt-lift {
+    transition:
+        border-color var(--fs-dur-micro) var(--fs-ease),
+        box-shadow var(--fs-dur-micro) var(--fs-ease),
+        transform var(--fs-dur-micro) var(--fs-ease);
+}
+.qt-lift:hover {
+    border-color: var(--fs-hairline-strong);
+    box-shadow: var(--fs-e2);
+    transform: translateY(-2px);
+}
+.qt-lift:active { transform: translateY(0); }
+
+/* ==================== 3. mono 眉标 / 等宽读数（指挥台标识语言） ==================== */
+.qt-eyebrow {
+    font-family: var(--fs-font-mono);
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    color: var(--fs-ink-400);
+}
+.qt-num {
+    font-family: var(--fs-font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ==================== 4. 刻度尺（横向刻度装饰，数据卡/分隔用） ==================== */
+.qt-ticks {
+    height: 5px;
+    background: repeating-linear-gradient(
+        90deg,
+        var(--fs-hairline) 0 1px,
+        transparent 1px 8px
+    );
+}
+.qt-ticks--tall {
+    height: 9px;
+    background: repeating-linear-gradient(
+        90deg,
+        var(--fs-hairline-strong) 0 1px,
+        transparent 1px 24px
+    );
+}
+
+/* ==================== 5. 状态标识（火险五级语义点 + mono 标签） ==================== */
+.qt-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--fs-font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--fs-ink-500);
+}
+.qt-status i {
+    width: 6px;
+    height: 6px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--fs-info);
+}
+/* 火险五级（与 riskLevel.js LEVEL_INFO_MAP 正常/注意/警告/高度/极度 一一对应） */
+.qt-status.is-r1 i { background: var(--fs-risk-1); }
+.qt-status.is-r2 i { background: var(--fs-risk-2); }
+.qt-status.is-r3 i { background: var(--fs-risk-3); }
+.qt-status.is-r4 i { background: var(--fs-risk-4); }
+.qt-status.is-r5 i { background: var(--fs-risk-5); }
+/* 通用状态色（非火险口径：低/中/高/极端 强弱语义） */
+.qt-status.is-low i { background: var(--fs-risk-low); }
+.qt-status.is-mid i { background: var(--fs-risk-mid); }
+.qt-status.is-high i { background: var(--fs-risk-high); }
+.qt-status.is-extreme i { background: var(--fs-risk-extreme); }
+.qt-status.is-ok i { background: var(--fs-success); }
+.qt-status.is-warn i { background: var(--fs-warning); }
+.qt-status.is-err i { background: var(--fs-danger); }
+
+/* ==================== 6. 四角括号装饰（检测框语义，纯 CSS 伪元素） ==================== */
+.qt-corner { position: relative; }
+.qt-corner::before,
+.qt-corner::after {
+    content: '';
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    pointer-events: none;
+    border: 1px solid var(--fs-hairline-strong);
+    transition: border-color var(--fs-dur-micro) var(--fs-ease);
+}
+.qt-corner::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+.qt-corner::after { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+.qt-corner:hover::before,
+.qt-corner:hover::after { border-color: var(--fs-accent); }
+
+/* ==================== 7. Notion 式行 hover（列表/表格行：只变背景，零位移） ==================== */
+.qt-row {
+    transition: background-color var(--fs-dur-micro) var(--fs-ease);
+}
+.qt-row:hover { background: rgba(var(--fs-ink-900-rgb), 0.035); }
+
+/* ==================== 8. 键盘焦点（Corporate Clean：ring + offset，WCAG） ==================== */
+.qt-focus:focus-visible {
+    outline: 2px solid var(--fs-accent);
+    outline-offset: 2px;
+    border-radius: var(--fs-r-sm);
+}
+
+/* ==================== 9. 扫描细线（公开页 hero / 分隔装饰） ==================== */
+.qt-scanline {
+    height: 1px;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(var(--fs-accent-rgb), 0.4),
+        transparent
+    );
+}
+
+/* ==================== 9.5 蓝图图纸标注（Blueprint：十字定位标 + 虚线辅助线） ====================
+   手法取自 stylekit「工程蓝图」：网格坐标、标注线、尺寸标记；
+   不取蓝底（与冷钢/暗夜 token 冲突），只取标注语言，颜色全部引用既有 --fs-* 令牌 */
+.qt-bp { position: relative; }
+.qt-bp::before,
+.qt-bp::after {
+    content: '';
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    pointer-events: none;
+    opacity: 0.5;
+    background:
+        linear-gradient(var(--fs-ink-400), var(--fs-ink-400)) center / 1px 9px no-repeat,
+        linear-gradient(var(--fs-ink-400), var(--fs-ink-400)) center / 9px 1px no-repeat;
+    transition: opacity var(--fs-dur-micro) var(--fs-ease);
+}
+.qt-bp::before { top: -5px; left: -5px; }
+.qt-bp::after { bottom: -5px; right: -5px; }
+/* 图纸虚线辅助线（轨道/连接线用） */
+.qt-bp-dash {
+    background: repeating-linear-gradient(
+        180deg,
+        var(--fs-hairline-strong) 0 4px,
+        transparent 4px 9px
+    );
+}
+
+/* ==================== 10. 公开子页通用区块（头区之后的正文节） ====================
+   节奏：相邻区块间距总量 88–128px（每份 44–64）；sunken 全宽底 + 显式 .qsec__in
+   居中容器；末节用 .qsec--last 收束，不堆叠留白 */
+.qsec {
+    padding: clamp(40px, 5vw, 64px) 0;
+    width: min(1120px, 100% - 48px);
+    margin: 0 auto;
+}
+.qsec--sunken {
+    background: var(--fs-bg-sunken);
+    border-top: 1px solid var(--fs-hairline);
+    border-bottom: 1px solid var(--fs-hairline);
+    width: 100%;
+}
+.qsec__in {
+    width: min(1120px, 100% - 48px);
+    margin: 0 auto;
+}
+.qsec__hd {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--fs-s4);
+}
+.qsec__t {
+    margin: 10px 0 0;
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--fs-ink-900);
+}
+.qsec__lead {
+    margin: 14px 0 0;
+    max-width: 560px;
+    font-size: 13.5px;
+    line-height: 2;
+    color: var(--fs-ink-500);
+}
+.qsec__more {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--fs-accent);
+    text-decoration: none;
+    padding: 6px 4px;
+    transition: color var(--fs-dur-micro) var(--fs-ease);
+}
+.qsec__more:hover { color: var(--fs-accent-hover); }
+
+/* 指针聚光（Bento 卡片聚光手法：radial 光斑跟随 --mx/--my，hover 显现） */
+.qt-spot { position: relative; overflow: hidden; transform-style: preserve-3d; }
+.qt-spot::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(220px circle at var(--mx, 50%) var(--my, 50%), rgba(var(--fs-accent-rgb), 0.07), transparent 65%);
+    opacity: 0;
+    transition: opacity var(--fs-dur-micro) var(--fs-ease);
+    pointer-events: none;
+}
+.qt-spot:hover::after, .qt-spot:focus-visible::after { opacity: 1; }
+/* 文字层抬离倾斜平面，3D 聚光时不产生模糊 */
+.qt-spot > * { transform: translateZ(1px); }
+
+/* ==================== 章节线条随滚动绘制（GSAP scrub 驱动 --hd-line 0→1） ====================
+   真滚动联动：scrub 展开/回缩（start top 88% → end top 55%），不做一次性动画。
+   默认 var=1 满格静态（off / auto+系统减 时 JS 不写变量，天然降级；on 时 scrub 生效） */
+.sec__hd .qt-eyebrow,
+.qsec__hd .qt-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+.sec__hd .qt-eyebrow::before,
+.qsec__hd .qt-eyebrow::before {
+    content: '';
+    width: 22px;
+    height: 1px;
+    background: var(--fs-accent);
+    transform: scaleX(var(--hd-line, 1));
+    transform-origin: left center;
+}
+.sec__hd > div::after,
+.qsec__hd > div::after {
+    content: '';
+    display: block;
+    width: 56px;
+    height: 1px;
+    margin-top: 12px;
+    background: var(--fs-hairline-strong);
+    transform: scaleX(var(--hd-line, 1));
+    transform-origin: left center;
+}
+/* off（或 auto+系统减）时去掉倾斜与文字抬升，保留聚光；on 覆盖系统 reduce */
+html[data-motion-allowed="false"] .qt-spot { transform-style: flat; }
+html[data-motion-allowed="false"] .qt-spot > * { transform: none; }
+@media (prefers-reduced-motion: reduce) {
+    html:not([data-motion="on"]) .qt-spot { transform-style: flat; }
+    html:not([data-motion="on"]) .qt-spot > * { transform: none; }
+}
+
+/* 公开子页 CTA（与总览页 .btn 同参：顶边高光 + active 下沉） */
+.qbtn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 42px;
+    padding: 0 22px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-decoration: none;
+    border-radius: var(--fs-r-md);
+    cursor: pointer;
+    transition:
+        background var(--fs-dur-micro) var(--fs-ease),
+        border-color var(--fs-dur-micro) var(--fs-ease),
+        box-shadow var(--fs-dur-micro) var(--fs-ease),
+        transform var(--fs-dur-micro) var(--fs-ease);
+}
+.qbtn--primary {
+    color: var(--fs-on-accent);
+    background: var(--fs-accent);
+    border: 1px solid transparent;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), var(--fs-e2);
+}
+.qbtn--primary:hover { background: var(--fs-accent-hover); }
+.qbtn--primary:active { transform: translateY(0.5px); }
+.qbtn--ghost {
+    color: var(--fs-ink-700);
+    background: transparent;
+    border: 1px solid var(--fs-hairline-strong);
+}
+.qbtn--ghost:hover {
+    color: var(--fs-ink-900);
+    border-color: var(--fs-ink-400);
+    background: rgba(var(--fs-ink-900-rgb), 0.03);
+}
+
+@media (max-width: 640px) {
+    .qsec { width: min(1120px, 100% - 32px); }
+    .qsec__in { width: min(1120px, 100% - 32px); }
+}
+/* 末节收束：上边距归零（由上一节的 padding-bottom 提供唯一一份间距），
+   与翻页带之间只留 28–40px，杜绝「空 section + 大 padding」叠出的大片空白 */
+.qsec--last {
+    padding-top: 0;
+    padding-bottom: clamp(28px, 3vw, 40px);
+}
+
+/* ==================== 14. 公开页极细颗粒质感层（静态噪点，零动画零重绘） ====================
+   pointer-events:none；opacity ≤0.025；fixed 相对视口，不随滚动重排。
+   off 时直接隐藏（尊重静态偏好），on 覆盖系统 reduce 后显示 */
+.grain {
+    position: fixed;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+    opacity: 0.022;
+    mix-blend-mode: soft-light;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");
+    background-size: 180px 180px;
+}
+html[data-motion-allowed="false"] .grain { display: none; }
+@media (prefers-reduced-motion: reduce) {
+    html:not([data-motion="on"]) .grain { display: none; }
+}
+
+/* ==================== 13. 公开页组路由转场（View Transitions，渐进增强，≤320ms） ==================== */
+::view-transition-old(root) {
+    animation: vt-out 0.2s var(--fs-ease-out) both;
+}
+::view-transition-new(root) {
+    animation: vt-in-clip 0.32s var(--fs-ease) both;
+}
+html[data-vt-dir="prev"] ::view-transition-new(root) {
+    animation-name: vt-in-clip-rev;
+}
+@keyframes vt-out {
+    to { opacity: 0; transform: translateY(-8px); }
+}
+/* 前进：从左向右展开；后退：从右向左展开（clip-path 遮罩） */
+@keyframes vt-in-clip {
+    from { clip-path: inset(0 100% 0 0); opacity: 0.72; }
+    to { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+@keyframes vt-in-clip-rev {
+    from { clip-path: inset(0 0 0 100%); opacity: 0.72; }
+    to { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+/* off（或 auto+系统减）时无转场；on 覆盖系统 reduce */
+html[data-motion-allowed="false"] ::view-transition-old(root),
+html[data-motion-allowed="false"] ::view-transition-new(root) { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+    html:not([data-motion="on"]) ::view-transition-old(root),
+    html:not([data-motion="on"]) ::view-transition-new(root) { animation: none; }
+}
+
+/* ==================== 11. 内部页轻量动效工具（配合 useReveal / 纯 CSS） ====================
+   只动 transform/opacity/filter；reduced-motion 全量静态。 */
+.rv-i {
+    opacity: 0;
+    transform: translateY(14px);
+    filter: blur(4px);
+    transition:
+        opacity 0.5s var(--fs-ease-out),
+        transform 0.5s var(--fs-ease-out),
+        filter 0.5s var(--fs-ease-out);
+}
+.rv-i.is-in { opacity: 1; transform: none; filter: none; }
+
+/* 挂载即播的单次入场（零 JS，天然只跑一次） */
+.a-rise { animation: qt-rise 0.5s var(--fs-ease-out) both; }
+@keyframes qt-rise {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: none; }
+}
+/* 错峰：第 1–6 个延迟 70ms 递增，其余同批（避免长列表拖沓） */
+.stagger > :nth-child(1) { animation-delay: 0s; }
+.stagger > :nth-child(2) { animation-delay: 0.07s; }
+.stagger > :nth-child(3) { animation-delay: 0.14s; }
+.stagger > :nth-child(4) { animation-delay: 0.21s; }
+.stagger > :nth-child(5) { animation-delay: 0.28s; }
+.stagger > :nth-child(6) { animation-delay: 0.35s; }
+
+/* 表格首屏行淡入（前 12 行，超过不逐个动画）
+   基线=终态可见：隐藏只写在 keyframe 的 from + both 回填，
+   任何 animation:none（App 动效开关 / OS reduced）都不会残留 opacity:0 而看不见行 */
+.row-fade tbody tr {
+    animation: qt-row-in 0.4s var(--fs-ease-out) both;
+}
+.row-fade tbody tr:nth-child(n + 13) { animation: none; }
+@keyframes qt-row-in {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: none; }
+}
+.row-fade tbody tr:nth-child(1) { animation-delay: 0.02s; }
+.row-fade tbody tr:nth-child(2) { animation-delay: 0.05s; }
+.row-fade tbody tr:nth-child(3) { animation-delay: 0.08s; }
+.row-fade tbody tr:nth-child(4) { animation-delay: 0.11s; }
+.row-fade tbody tr:nth-child(5) { animation-delay: 0.14s; }
+.row-fade tbody tr:nth-child(6) { animation-delay: 0.17s; }
+.row-fade tbody tr:nth-child(7) { animation-delay: 0.2s; }
+.row-fade tbody tr:nth-child(8) { animation-delay: 0.23s; }
+.row-fade tbody tr:nth-child(9) { animation-delay: 0.26s; }
+.row-fade tbody tr:nth-child(10) { animation-delay: 0.29s; }
+.row-fade tbody tr:nth-child(11) { animation-delay: 0.32s; }
+.row-fade tbody tr:nth-child(12) { animation-delay: 0.35s; }
+
+/* 错误提示轻微 shake（reduced 禁用） */
+.a-shake { animation: qt-shake 0.3s var(--fs-ease); }
+@keyframes qt-shake {
+    20% { transform: translateX(-3px); }
+    50% { transform: translateX(3px); }
+    80% { transform: translateX(-1.5px); }
+}
+
+/* ==================== 12. reduced-motion 全量降级 ==================== */
+@media (prefers-reduced-motion: reduce) {
+    .rv-i,
+    .a-rise,
+    .row-fade tbody tr,
+    .a-shake {
+        animation: none;
+        opacity: 1;
+        transform: none;
+        filter: none;
+        transition: none;
+    }
+    .qt-lift,
+    .qt-lift:hover,
+    .qt-lift:active,
+    .pg-card--lift,
+    .pg-card--lift:hover,
+    .pg-card--lift:active,
+    .qt-corner::before,
+    .qt-corner::after,
+    .qt-row,
+    .qt-focus { transition: none; }
+    .qt-lift:hover { transform: none; }
+    .pg-card--lift:hover, .pg-card--lift:active { transform: none; }
+}
+
+/* ==================== 13. App 内动效开关关闭：与 OS reduced 同等降级 ====================
+   data-motion-allowed=false 由 useMotionPreference 写入，不依赖系统偏好；
+   纯 CSS 入场/抖动/上浮在此一并收口，避免"关了动效还在动"。 */
+html[data-motion-allowed="false"] .a-rise,
+html[data-motion-allowed="false"] .row-fade tbody tr,
+html[data-motion-allowed="false"] .a-shake {
+    animation: none;
+}
+html[data-motion-allowed="false"] .qt-lift:hover,
+html[data-motion-allowed="false"] .qt-lift:active,
+html[data-motion-allowed="false"] .pg-card--lift:hover,
+html[data-motion-allowed="false"] .pg-card--lift:active { transform: none; }

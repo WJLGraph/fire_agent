@@ -1,0 +1,172 @@
+/**
+ * 全局 Markdown 渲染样式（视觉体系 v2）
+ *
+ * 来源：从 views/report-center/index.vue 的 scoped `.markdown-body :deep(...)` 规则
+ *       提升为全局样式，report-center / agent-center / dashboard 三处统一表现。
+ *
+ * V4 重做要点（§10.6 报告中心「纸张化」+ §10.7 顶刊三线表）：
+ *   - 正文改宋体（--fs-font-serif，决策 D7）：把「AI 生成的 Markdown」变成可读文档
+ *   - 行高 1.9 / 段距 1em / 标题细线下划
+ *   - 表格改顶刊三线表：表头下 1px + 表底 1px，无竖线、无斑马纹
+ *   - 去彩色边框与背景块，分隔一律用发丝线
+ *
+ * 取值全部来自 --fs-* 令牌；无硬编码色值。
+ */
+
+/* ==================== 标题：细线下划，不用色块 ==================== */
+
+.markdown-body h1 {
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--fs-ink-900);
+    margin: 0 0 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--fs-hairline-strong);
+}
+
+.markdown-body h2 {
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.45;
+    color: var(--fs-ink-900);
+    margin: 28px 0 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--fs-hairline);
+}
+
+.markdown-body h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--fs-ink-900);
+    margin: 20px 0 8px;
+}
+
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--fs-ink-700);
+    margin: 16px 0 6px;
+}
+
+/* ==================== 正文：宋体纸张化（D7） ==================== */
+
+.markdown-body p {
+    font-family: var(--fs-font-serif);
+    font-size: 15px;
+    line-height: 1.9;
+    color: var(--fs-ink-700);
+    margin: 0 0 1em;
+    text-wrap: pretty;
+}
+
+.markdown-body li {
+    font-family: var(--fs-font-serif);
+    font-size: 15px;
+    line-height: 1.9;
+    color: var(--fs-ink-700);
+    margin-left: 20px;
+    margin-bottom: 0.35em;
+}
+
+.markdown-body li.ol-item {
+    list-style: decimal;
+}
+
+.markdown-body strong {
+    color: var(--fs-ink-900);
+    font-weight: 600;
+}
+
+.markdown-body em {
+    color: var(--fs-ink-700);
+    font-style: italic;
+}
+
+.markdown-body a {
+    color: var(--fs-accent);
+    text-underline-offset: 3px;
+}
+
+/* ==================== 引用 / 分隔 / 代码 ==================== */
+
+.markdown-body blockquote {
+    margin: 1.4em 0;
+    padding-left: 16px;
+    border-left: 1px solid var(--fs-accent);
+    color: var(--fs-ink-500);
+    font-family: var(--fs-font-serif);
+    font-size: 14px;
+    line-height: 1.85;
+}
+
+.markdown-body hr {
+    border: none;
+    border-top: 1px solid var(--fs-hairline);
+    margin: 28px 0;
+}
+
+.markdown-body code {
+    padding: 1px 5px;
+    background: var(--fs-bg-sunken);
+    border-radius: var(--fs-r-xs);
+    font-family: var(--fs-font-mono);
+    font-size: 12px;
+    color: var(--fs-ink-900);
+}
+
+.markdown-body pre {
+    margin: 16px 0;
+    padding: 12px 14px;
+    background: var(--fs-bg-sunken);
+    border-radius: var(--fs-r-sm);
+    overflow-x: auto;
+}
+
+.markdown-body pre code {
+    padding: 0;
+    background: transparent;
+    color: var(--fs-ink-700);
+    white-space: pre;
+}
+
+/* ==================== 顶刊三线表 ====================
+ * 只有三条横线：表头下 1px（实）+ 表底 1px（实）+ 行间极淡发丝线；
+ * 无竖线、无斑马纹、无表头底色块。
+ * ---------------------------------------------------- */
+
+.markdown-body .md-table-wrap {
+    overflow-x: auto;
+    margin: 8px 0 20px;
+}
+
+.markdown-body table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.markdown-body th {
+    padding: 7px 10px 7px 0;
+    font-family: var(--fs-font-sans);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: var(--fs-ink-500);
+    text-align: left;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--fs-hairline-strong);
+}
+
+.markdown-body td {
+    padding: 7px 10px 7px 0;
+    color: var(--fs-ink-700);
+    vertical-align: top;
+    border-bottom: 1px solid var(--fs-hairline);
+}
+
+.markdown-body tbody tr:last-child td {
+    border-bottom: 1px solid var(--fs-hairline-strong);
+}

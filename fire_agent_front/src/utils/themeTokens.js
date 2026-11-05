@@ -19,15 +19,18 @@ export function cssVar(name, fallback = '') {
   }
 }
 
-/** 图表常用主题色集合（每次调用实时取值，主题切换后立即生效） */
+/**
+ * 图表常用主题色集合（每次调用实时取值，主题切换后立即生效）
+ * V3：取值源从 --gis-*（兼容层）切到 --fs-*（新体系），fallback 保留旧值防取空。
+ */
 export function chartTokens() {
   return {
-    text: cssVar('--gis-text', '#0f172a'),
-    muted: cssVar('--gis-text-muted', '#64748b'),
-    border: cssVar('--gis-border', 'rgba(100, 116, 139, 0.28)'),
-    panel: cssVar('--gis-bg-panel-2', 'rgba(255, 255, 255, 0.94)'),
-    accent: cssVar('--gis-accent', '#2563eb'),
-    axis: cssVar('--gis-text-muted', '#64748b'),
-    split: cssVar('--gis-border', 'rgba(100, 116, 139, 0.28)'),
+    text: cssVar('--fs-ink-900', '#0f172a'),
+    muted: cssVar('--fs-ink-500', '#64748b'),
+    border: cssVar('--fs-hairline', 'rgba(100, 116, 139, 0.28)'),
+    panel: cssVar('--fs-bg-surface', '#ffffff'),
+    accent: cssVar('--fs-accent', '#2563eb'),
+    axis: cssVar('--fs-ink-500', '#64748b'),
+    split: cssVar('--fs-hairline', 'rgba(100, 116, 139, 0.28)'),
   }
 }

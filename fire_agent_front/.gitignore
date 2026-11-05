@@ -1,3 +1,5 @@
 node_modules
 .env
 dist
+.edge-*/
+_cleanup_trash/

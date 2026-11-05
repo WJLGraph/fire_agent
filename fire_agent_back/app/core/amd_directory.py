@@ -54,6 +54,12 @@ def _parse_detail(detail: dict, section: str) -> dict | None:
     专属实例详情形如 {"template": {..., "token_factory": {...}}}。
     token_factory.model 是 API 调用时使用的真实模型 ID（如 DeepSeek-V4-Flash），
     token_factory.name 是页面展示名（可能带后缀，如 DeepSeek-V4-Flash-0731）。
+    能力类型（capability.key，官方页面徽标）:
+      text=LLM (Text) / vision=VLM (Vision)
+      speech=TTS (Speech，如 OmniVoice) / ocr=OCR (Document，如 MinerU2.5-Pro)
+
+    视觉类（VLM）为多模态模型：除图片理解外同样具备文本对话能力，
+    因此 also_text/multimodal 标记为 True，可供管理端“兼作对话模型”使用。
     """
     record = detail.get("model") or detail.get("template") or {}
     tf = record.get("token_factory") or {}
@@ -63,7 +69,13 @@ def _parse_detail(detail: dict, section: str) -> dict | None:
     badge = tf.get("badge")
     sec = tf.get("section") or section
     tier = _tier_of(sec, badge)
-    cap = (tf.get("capability") or {}).get("key", "text")
+    cap = tf.get("capability") or {}
+    cap_key = cap.get("key") or "text"
+    cap_label = cap.get("label", "")
+    # 仅保留四类受支持能力，官方目录中的其他分类直接跳过
+    if cap_key not in ("text", "vision", "speech", "ocr"):
+        return None
+    category = cap_key
     publisher = (tf.get("publisher") or {}).get("name", "")
     desc = tf.get("description") or record.get("description") or ""
     status = (tf.get("status") or {}).get("label", "")
@@ -71,11 +83,15 @@ def _parse_detail(detail: dict, section: str) -> dict | None:
         "id": model_id,
         "name": tf.get("name") or model_id,
         "tier": tier,
-        "category": "vision" if cap == "vision" else "text",
+        "category": category,
+        "capability_label": cap_label,
         "publisher": publisher,
         "desc": desc,
         "status": status,
         "section": sec,
+        # VLM 视觉模型是多模态的，可同时用作大语言模型（文本对话/报告生成）
+        "multimodal": cap_key == "vision",
+        "also_text": cap_key == "vision",
     }
 
 

@@ -6,10 +6,7 @@
  */
 import { reactive } from 'vue'
 import { ElMessage } from 'element-plus'
-import authFetch from '@/utils/authFetch'
-import { API_V1 } from '@/utils/config'
-
-const MEDIA_API = `${API_V1}/vision`
+import { textToSpeechRaw, transcribe } from '@/api/vision'
 
 
 // ====== TTS 播报 ======
@@ -36,11 +33,7 @@ export async function speakText(text) {
     if (!plain) { ElMessage.warning('无内容可播报'); return }
     try {
         speakState.loading = true
-        const res = await authFetch(`${MEDIA_API}/audio/speech`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: plain }),
-        })
+        const res = await textToSpeechRaw(plain)
         if (!res.ok) {
             const err = await res.json().catch(() => ({}))
             ElMessage.error(err.detail || '语音合成失败')
@@ -172,8 +165,7 @@ export function stopRecord(silent = false) {
         try {
             const fd = new FormData()
             fd.append('file', wav, 'speech.wav')
-            const res = await authFetch(`${MEDIA_API}/audio/transcriptions`, { method: 'POST', body: fd })
-            const json = await res.json()
+            const json = await transcribe(fd)
             if (json.code === 200 && json.data.ok) {
                 const text = (json.data.text || '').trim()
                 if (text) {

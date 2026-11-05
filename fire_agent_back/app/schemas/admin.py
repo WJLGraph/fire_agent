@@ -17,11 +17,16 @@ class ConfigUpdate(BaseModel):
     llm_model: Optional[str] = None
     embedding_model: Optional[str] = None
 
-    # 视觉 / 语音模型（视觉可切换 aliyun/amd，语音恒定阿里百炼）
+    # 视觉 / 语音模型（视觉、语音均可切换 aliyun/amd）
     vision_provider: Optional[str] = None  # aliyun | amd
     vision_model: Optional[str] = None
     asr_model: Optional[str] = None
+    tts_provider: Optional[str] = None  # aliyun | amd
     tts_model: Optional[str] = None
+
+    # 文档识别 OCR（local=RapidOCR 兜底 | amd=AMD MinerU2.5-Pro）
+    ocr_provider: Optional[str] = None  # local | amd
+    ocr_model: Optional[str] = None
 
     # AMD GPU Cloud
     amd_api_key: Optional[str] = None
